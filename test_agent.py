@@ -437,7 +437,6 @@ class OpenAITests(ProviderTestCase):
         fake = self.api(self.reply({"content": "hi"}))
         agent.OpenAIProvider(None, "local", fake.url).chat("s", HISTORY[:1], [])
         self.assertNotIn("authorization", fake.requests[0]["headers"])
-        self.assertNotIn("tools", fake.requests[0]["body"])
 
     def test_invalid_json_arguments(self):
         call = {"id": "x1", "type": "function", "function": {"name": "run", "arguments": "{broken"}}
@@ -459,6 +458,194 @@ class OpenAITests(ProviderTestCase):
         fake = self.api((200, {"oops": 1}))
         with self.assertRaises(agent.AgentError):
             agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+
+
+class ScriptedProvider:
+    """Replays scripted (text, calls, tokens) replies; a BaseException step is raised instead."""
+
+    def __init__(self, *steps):
+        self.steps, self.seen = list(steps), []
+
+    def chat(self, system, history, tools):
+        self.seen.append((system, json.loads(json.dumps(history)), [t["name"] for t in tools]))
+        step = self.steps.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return step
+
+
+def call(id, name, **input):
+    return {"id": id, "name": name, "input": input}
+
+
+def assert_valid_history(test, history):
+    """Every assistant tool call must be answered by the very next tool message."""
+    for i, m in enumerate(history):
+        if m["role"] == "assistant" and m.get("calls"):
+            test.assertLess(i + 1, len(history), "tool calls without results")
+            test.assertEqual(history[i + 1]["role"], "tool")
+            test.assertEqual([r["id"] for r in history[i + 1]["results"]], [c["id"] for c in m["calls"]])
+
+
+class AgentTestCase(ToolTestCase):
+    def agent(self, *steps, mode="auto"):
+        self.provider = ScriptedProvider(*steps)
+        self.tools = self.make(mode)
+        return agent.Agent(self.provider, self.tools, self.ui, "SYSTEM")
+
+    def events(self, kind):
+        return [d for k, d in self.ui.events if k == kind]
+
+
+class AgentLoopTests(AgentTestCase):
+    def test_multi_step_task(self):
+        self.put("calc.py", "def add(a, b):\n    return a - b\n")
+        self.put("check.py", "from calc import add\nassert add(2, 3) == 5, 'add is broken'\n")
+        bot = self.agent(
+            ("Let me look.", [call("1", "read_file", path="calc.py")], (100, 10)),
+            ("", [call("2", "edit_file", path="calc.py", old_text="a - b", new_text="a + b")], (150, 20)),
+            ("", [call("3", "run", command="python3 check.py")], (200, 5)),
+            ("Fixed: add now adds.", [], (250, 15)),
+        )
+        self.assertEqual(bot.run("fix add"), "Fixed: add now adds.")
+        self.assertIn("a + b", (self.root / "calc.py").read_text())
+        self.assertEqual(self.events("result")[2]["output"].split("\n")[0], "[exit code 0]")
+        self.assertEqual(self.events("done"), [{"turns": 4, "input_tokens": 700, "output_tokens": 50}])
+        self.assertEqual(self.ui.kinds()[:3], ["text", "tool", "result"])
+        self.assertEqual([m["role"] for m in bot.history],
+                         ["user", "assistant", "tool", "assistant", "tool", "assistant", "tool", "assistant"])
+        assert_valid_history(self, bot.history)
+
+    def test_tool_errors_go_back_to_the_model(self):
+        bot = self.agent(("", [call("1", "read_file", path="missing.py"), call("2", "bogus")], (1, 1)),
+                         ("I could not find it.", [], (1, 1)))
+        self.assertEqual(bot.run("go"), "I could not find it.")
+        self.assertEqual([r["is_error"] for r in bot.history[2]["results"]], [True, True])
+
+    def test_denied_approval_is_reported_to_model(self):
+        bot = self.agent(("", [call("1", "run", command="touch x")], (1, 1)), ("ok", [], (1, 1)), mode="ask")
+        self.ui.answers = ["please do not"]
+        bot.run("go")
+        self.assertIn("please do not", bot.history[2]["results"][0]["output"])
+        self.assertFalse((self.root / "x").exists())
+
+    def test_read_only_offers_no_write_tools(self):
+        bot = self.agent(("done", [], (1, 1)), mode="read-only")
+        bot.run("look")
+        self.assertEqual(self.provider.seen[0][2], ["list_files", "search", "read_file"])
+
+    def test_turn_limit(self):
+        bot = self.agent(*[("", [call(str(i), "list_files")], (1, 1)) for i in range(agent.MAX_TURNS)])
+        self.assertIsNone(bot.run("loop forever"))
+        self.assertEqual(len(self.provider.seen), agent.MAX_TURNS)
+        self.assertIn("turns", self.events("error")[0]["message"])
+        assert_valid_history(self, bot.history)
+
+    def test_empty_response_keeps_history_valid(self):
+        bot = self.agent(("", [], (1, 1)))
+        bot.run("hi")
+        self.assertTrue(bot.history[-1]["text"])
+
+    def test_api_error_returns_none(self):
+        bot = self.agent(agent.AgentError("HTTP 400: nope"))
+        self.assertIsNone(bot.run("hi"))
+        self.assertEqual(self.events("error"), [{"message": "HTTP 400: nope"}])
+
+
+class InterruptTests(AgentTestCase):
+    def test_interrupt_during_tool_leaves_valid_history(self):
+        bot = self.agent(("", [call("1", "list_files"), call("2", "run", command="sleep 5")], (1, 1)))
+
+        class Boom(agent.Tools):
+            def call(self, name, args):
+                if name == "run":
+                    raise KeyboardInterrupt
+                return super().call(name, args)
+
+        bot.tools = Boom(self.root, self.ui, "auto")
+        self.assertIsNone(bot.run("go"))
+        self.assertEqual(self.events("error"), [{"message": "interrupted"}])
+        assert_valid_history(self, bot.history)
+        self.assertTrue(all(r["is_error"] for r in bot.history[-1]["results"]))
+
+    def test_next_task_after_interrupt_is_valid_for_both_apis(self):
+        bot = self.agent(("", [call("1", "list_files")], (1, 1)))
+        bot.tools = type("T", (agent.Tools,), {"call": lambda *a: (_ for _ in ()).throw(KeyboardInterrupt)})(
+            self.root, self.ui, "auto")
+        bot.run("first")
+        bot.history.append({"role": "user", "text": "second"})
+        assert_valid_history(self, bot.history)
+        msgs = agent.AnthropicProvider.convert(bot.history)
+        self.assertEqual([m["role"] for m in msgs], ["user", "assistant", "user"])
+        self.assertEqual([b["type"] for b in msgs[-1]["content"]], ["tool_result", "text"])
+        roles = [m["role"] for m in agent.OpenAIProvider.convert("s", bot.history)]
+        self.assertEqual(roles, ["system", "user", "assistant", "tool", "user"])
+
+    def test_repair_is_a_no_op_when_nothing_is_pending(self):
+        bot = self.agent()
+        bot.repair()
+        bot.history = [{"role": "user", "text": "x"}]
+        bot.repair()
+        self.assertEqual(len(bot.history), 1)
+
+
+class TrimTests(AgentTestCase):
+    def history(self, n, size):
+        h = [{"role": "user", "text": "task"}]
+        for i in range(n):
+            h.append({"role": "assistant", "text": "", "calls": [call(str(i), "read_file")]})
+            h.append({"role": "tool", "results": [{"id": str(i), "output": "x" * size, "is_error": False}]})
+        return h
+
+    def test_small_history_is_untouched(self):
+        bot = self.agent()
+        bot.history = self.history(3, 1000)
+        before = json.dumps(bot.history)
+        bot.trim()
+        self.assertEqual(json.dumps(bot.history), before)
+
+    def test_trims_oldest_first_and_keeps_last_two_messages(self):
+        bot = self.agent()
+        bot.history = self.history(8, 100000)
+        bot.trim()
+        outputs = [r["output"] for m in bot.history if m["role"] == "tool" for r in m["results"]]
+        self.assertEqual(outputs[0], agent.OLD_OUTPUT)
+        self.assertEqual(outputs[-1], "x" * 100000)
+        self.assertLessEqual(len(json.dumps(bot.history)), agent.CONTEXT_BUDGET + 1000)
+        self.assertGreater(outputs.count(agent.OLD_OUTPUT), 0)
+        self.assertLess(outputs.count(agent.OLD_OUTPUT), len(outputs))
+
+    def test_never_touches_last_two_messages_even_over_budget(self):
+        bot = self.agent()
+        bot.history = self.history(2, 300000)
+        bot.trim()
+        self.assertEqual(bot.history[-1]["results"][0]["output"], "x" * 300000)
+
+    def test_short_outputs_are_kept(self):
+        bot = self.agent()
+        bot.history = self.history(8, 150) + self.history(2, 300000)[1:]
+        bot.trim()
+        self.assertEqual(bot.history[2]["results"][0]["output"], "x" * 150)
+
+
+class SystemPromptTests(ToolTestCase):
+    def test_includes_root_os_and_shell(self):
+        prompt = agent.build_system(self.root)
+        self.assertIn(str(self.root), prompt)
+        self.assertIn("kidwit", prompt)
+        self.assertNotIn("Project instructions", prompt)
+
+    def test_agents_md_then_claude_md(self):
+        self.put("CLAUDE.md", "claude rules")
+        self.assertIn("claude rules", agent.build_system(self.root))
+        self.put("AGENTS.md", "agents rules")
+        prompt = agent.build_system(self.root)
+        self.assertIn("agents rules", prompt)
+        self.assertNotIn("claude rules", prompt)
+
+    def test_instructions_are_clipped(self):
+        self.put("AGENTS.md", "y" * 50000)
+        self.assertLess(agent.build_system(self.root).count("y"), 20100)
 
 
 if __name__ == "__main__":

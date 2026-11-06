@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """kidwit: a minimal coding-agent engine. Standard library only.
 
-Usage:
-  python3 agent.py "fix the failing test"   # one-shot
-  python3 agent.py                          # interactive REPL
-  python3 agent.py --json "task"            # JSON-lines events on stdout
+Usage: python3 agent.py "fix the failing test"   (no task: REPL; --json: JSON-lines events)
 Env: ANTHROPIC_API_KEY, OPENAI_API_KEY, AGENT_PROVIDER, AGENT_MODEL, AGENT_BASE_URL
 """
 import argparse
@@ -39,13 +36,10 @@ SYSTEM = """You are kidwit, a coding agent working inside one project directory.
 Project root: {root}
 OS: {os}   Shell: {shell}
 
-Work like a careful engineer:
-- Explore with list_files and search, then read_file before you change anything.
-- Prefer edit_file for small changes; copy old_text exactly from the file.
-- Use run to execute tests and commands. Verify your work by running the tests.
-- Paths are relative to the project root. You cannot touch files outside it.
-- The user may deny an action and give feedback; adapt and try another way.
-- Be concise. When the task is done, say what you changed and the result."""
+Explore with list_files and search, and read_file before you change anything.
+Prefer edit_file for small changes, copying old_text exactly. Verify your work by running the tests.
+Paths are relative to the project root. The user may deny an action and give feedback; adapt.
+Be concise. When done, say what you changed and the result."""
 
 
 class AgentError(Exception):
@@ -63,36 +57,29 @@ def clip(text, limit=MAX_TOOL_OUTPUT):
     return f"{text[:head]}\n...[{len(text) - limit} chars clipped]...\n{text[-(limit - head):]}"
 
 
-def _tool(name, desc, props, required):
-    schema = {k: {"type": t, "description": d} for k, (t, d) in props.items()}
+def _tool(name, desc, props, required=()):
+    schema = {k: {"type": t} for k, t in props.items()}
     return {"name": name, "description": desc,
-            "input_schema": {"type": "object", "properties": schema, "required": required}}
+            "input_schema": {"type": "object", "properties": schema, "required": list(required)}}
 
 
-PATTERN = ("string", "Optional glob filter such as '*.py' or 'src/**/*.py'")
+GLOB = "pattern is an optional glob such as '*.py' or 'src/**/*.py'."
 TOOLS = [
-    _tool("list_files", "List project files, optionally filtered by a glob pattern.",
-          {"pattern": PATTERN}, []),
-    _tool("search", "Search file contents with a Python regex. Returns path:line: text.",
-          {"regex": ("string", "Python regular expression"), "pattern": PATTERN}, ["regex"]),
-    _tool("read_file", "Read a file with line numbers.",
-          {"path": ("string", "File path"), "offset": ("integer", "First line, 1-based"),
-           "limit": ("integer", "Max lines (default 2000)")}, ["path"]),
-    _tool("write_file", "Create or overwrite a file with the given content.",
-          {"path": ("string", "File path"), "content": ("string", "Full file content")},
-          ["path", "content"]),
+    _tool("list_files", f"List project files. {GLOB}", {"pattern": "string"}),
+    _tool("search", f"Search file contents with a Python regex; returns path:line: text. {GLOB}",
+          {"regex": "string", "pattern": "string"}, ["regex"]),
+    _tool("read_file", "Read a file with line numbers. offset is the 1-based first line; "
+          "limit defaults to 2000.", {"path": "string", "offset": "integer", "limit": "integer"}, ["path"]),
+    _tool("write_file", "Create or overwrite a file.",
+          {"path": "string", "content": "string"}, ["path", "content"]),
     _tool("edit_file", "Replace exact text in a file. old_text must match exactly once "
           "unless replace_all is true.",
-          {"path": ("string", "File path"), "old_text": ("string", "Exact text to replace"),
-           "new_text": ("string", "Replacement text"),
-           "replace_all": ("boolean", "Replace every match")}, ["path", "old_text", "new_text"]),
-    _tool("run", "Run a shell command in the project root and return its output.",
-          {"command": ("string", "Shell command"),
-           "timeout": ("integer", "Seconds before the command is killed (default 120)")},
-          ["command"]),
+          {"path": "string", "old_text": "string", "new_text": "string", "replace_all": "boolean"},
+          ["path", "old_text", "new_text"]),
+    _tool("run", "Run a shell command in the project root. timeout is in seconds (default 120).",
+          {"command": "string", "timeout": "integer"}, ["command"]),
 ]
 WRITE_TOOLS = {"write_file", "edit_file", "run"}
-TOOL_NAMES = {t["name"] for t in TOOLS}
 
 
 def post_json(url, headers, body):
@@ -118,12 +105,15 @@ def post_json(url, headers, body):
     raise AgentError(f"request failed after 4 attempts: {err}")
 
 
-class AnthropicProvider:
-    """Anthropic Messages API. chat() contract: PROJECT.md section 5."""
+class Provider:
+    """chat(system, history, tools) -> (text, calls, (tokens_in, tokens_out)). PROJECT.md section 5."""
 
-    def __init__(self, key, model=DEFAULT_MODEL, base=None):
-        self.key, self.model = key, model
-        self.base = (base or "https://api.anthropic.com").rstrip("/")
+    def __init__(self, key, model, base=None):
+        self.key, self.model, self.base = key, model, (base or self.default_base).rstrip("/")
+
+
+class AnthropicProvider(Provider):
+    default_base = "https://api.anthropic.com"
 
     @staticmethod
     def convert(history):
@@ -151,10 +141,8 @@ class AnthropicProvider:
         msgs = self.convert(history)
         if msgs:
             msgs[-1]["content"][-1]["cache_control"] = cache
-        body = {"model": self.model, "max_tokens": MAX_TOKENS, "messages": msgs,
+        body = {"model": self.model, "max_tokens": MAX_TOKENS, "messages": msgs, "tools": tools,
                 "system": [{"type": "text", "text": system, "cache_control": cache}]}
-        if tools:
-            body["tools"] = tools
         headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
         reply = post_json(f"{self.base}/v1/messages", headers, body)
         blocks = reply.get("content") or []
@@ -167,12 +155,9 @@ class AnthropicProvider:
         return text, calls, (tokens_in, u.get("output_tokens", 0))
 
 
-class OpenAIProvider:
+class OpenAIProvider(Provider):
     """OpenAI-compatible Chat Completions (OpenAI, OpenRouter, Ollama, LM Studio, vLLM)."""
-
-    def __init__(self, key, model, base=None):
-        self.key, self.model = key, model
-        self.base = (base or "https://api.openai.com/v1").rstrip("/")
+    default_base = "https://api.openai.com/v1"
 
     @staticmethod
     def convert(system, history):
@@ -193,11 +178,9 @@ class OpenAIProvider:
         return msgs
 
     def chat(self, system, history, tools):
-        body = {"model": self.model, "messages": self.convert(system, history)}
-        if tools:
-            body["tools"] = [{"type": "function", "function": {
-                "name": t["name"], "description": t["description"],
-                "parameters": t["input_schema"]}} for t in tools]
+        body = {"model": self.model, "messages": self.convert(system, history), "tools": [
+            {"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                              "parameters": t["input_schema"]}} for t in tools]}
         headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
         reply = post_json(f"{self.base}/chat/completions", headers, body)
         try:
@@ -218,18 +201,17 @@ class OpenAIProvider:
 
 
 def glob_re(pat):
-    """Compile a glob ('*', '?', '**') to a regex. '**/' also matches zero directories."""
-    out, i = "", 0
-    while i < len(pat):
-        if pat.startswith("**/", i):
-            out, i = out + "(?:.*/)?", i + 3
-        elif pat.startswith("**", i):
-            out, i = out + ".*", i + 2
-        elif pat[i] in "*?":
-            out, i = out + ("[^/]*" if pat[i] == "*" else "[^/]"), i + 1
-        else:
-            out, i = out + re.escape(pat[i]), i + 1
-    return re.compile(out + r"\Z")
+    """Glob to regex: '*' and '?' stay inside a directory; '**/' also matches zero directories."""
+    rx = re.escape(pat).replace(r"\*\*/", "(?:.*/)?").replace(r"\*\*", ".*")
+    return re.compile(rx.replace(r"\*", "[^/]*").replace(r"\?", "[^/]") + r"\Z")
+
+
+def kill_tree(proc):
+    """Kill a command and its children (a new session makes the process group killable)."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL) if os.name == "posix" else proc.kill()
+    except OSError:
+        pass
 
 
 def diff(old, new, name):
@@ -248,7 +230,7 @@ class Tools:
         """Run a tool. Never raises: every failure becomes (message, True)."""
         if self.mode == "read-only" and name in WRITE_TOOLS:
             return f"{name} is disabled in read-only mode", True
-        fn = getattr(self, "t_" + name, None) if name in TOOL_NAMES else None
+        fn = getattr(self, "t_" + name, None)
         if fn is None:
             return f"unknown tool: {name}", True
         try:
@@ -259,15 +241,11 @@ class Tools:
             return clip(fn(**args)), False
         except ToolError as e:
             return clip(str(e)), True
-        except TypeError as e:
-            return f"bad arguments: {e}", True
         except Exception as e:
             return f"{type(e).__name__}: {e}", True
 
     def path(self, p):
         """Resolve p inside the project root. Symlinks are followed, then checked."""
-        if not isinstance(p, str) or not p:
-            raise ToolError("path must be a non-empty string")
         full = (self.root / p).resolve()
         if full != self.root and self.root not in full.parents:
             raise ToolError(f"path is outside the project root: {p}")
@@ -309,14 +287,10 @@ class Tools:
         hits = []
         for p, rel in self.walk(pattern):
             try:
-                if p.stat().st_size > 2_000_000:
-                    continue
-                data = p.read_bytes()
-            except OSError:
+                text = self.load(p) if p.stat().st_size <= 2_000_000 else ""
+            except (OSError, ToolError):
                 continue
-            if b"\0" in data[:4096]:
-                continue
-            for n, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+            for n, line in enumerate(text.splitlines(), 1):
                 if rx.search(line):
                     hits.append(f"{rel}:{n}: {line[:300]}")
                     if len(hits) >= 200:
@@ -340,25 +314,22 @@ class Tools:
         self.ui.emit("approval", action=action, target=target, detail=detail)
         answer = (self.ui.ask("Allow? [y]es / [a]lways / [n]o / or type feedback: ") or "").strip()
         low = answer.lower()
-        if low in ("y", "yes"):
-            return
         if low in ("a", "always"):
             self.mode = "auto"
-            return
-        raise ToolError("denied by user" + (f": {answer}" if low not in ("", "n", "no") else ""))
+        elif low not in ("y", "yes"):
+            raise ToolError("denied by user" + (f": {answer}" if low not in ("", "n", "no") else ""))
 
-    def audit(self, action, target, **extra):
+    def audit(self, action, target):
         """Append a JSON line to .agent/audit.jsonl. Failures never break the agent."""
         if not self.log:
             return
         try:
             folder = self.root / ".agent"
             folder.mkdir(exist_ok=True)
-            if not (folder / ".gitignore").exists():
-                (folder / ".gitignore").write_text("*\n")
+            (folder / ".gitignore").write_text("*\n")
             entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "action": action, "target": target}
             with (folder / "audit.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps({**entry, **extra}) + "\n")
+                f.write(json.dumps(entry) + "\n")
         except Exception:
             pass
 
@@ -369,12 +340,8 @@ class Tools:
 
     def t_write_file(self, path, content):
         p = self.path(path)
-        if p.is_dir():
-            raise ToolError(f"path is a directory: {path}")
         rel = self.rel(p)
         old = self.load(p) if p.exists() else None
-        if old == content:
-            return f"{rel} already has this content"
         detail = diff(old, content, rel) if old is not None else content[:2000]
         self.confirm("write", rel, detail)
         self.audit("write", rel)
@@ -405,23 +372,11 @@ class Tools:
         timeout = float(timeout)
         self.confirm("run", command, command)
         self.audit("run", command)
-        posix = os.name == "posix"
         proc = subprocess.Popen(command, shell=True, cwd=self.root, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                encoding="utf-8", errors="replace", start_new_session=posix)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
+                                errors="replace", start_new_session=os.name == "posix")
         expired = []
-
-        def kill():
-            try:
-                os.killpg(proc.pid, signal.SIGKILL) if posix else proc.kill()
-            except OSError:
-                pass
-
-        def expire():
-            expired.append(True)
-            kill()
-
-        timer = threading.Timer(timeout, expire)
+        timer = threading.Timer(timeout, lambda: (expired.append(True), kill_tree(proc)))
         timer.start()
         lines = []
         try:
@@ -430,7 +385,7 @@ class Tools:
                 self.ui.emit("output", line=line.rstrip("\n"))
             proc.wait()
         except BaseException:
-            kill()
+            kill_tree(proc)
             raise
         finally:
             timer.cancel()
@@ -451,8 +406,7 @@ class UI:
 
     def paint_diff(self, text):
         codes = {"+": "32", "-": "31", "@": "36"}
-        return "\n".join(self.paint(codes.get(line[:1], "0"), line) if line[:3] not in ("+++", "---")
-                         else line for line in text.splitlines())
+        return "\n".join(self.paint(codes.get(line[:1], "0"), line) for line in text.splitlines())
 
     def emit(self, kind, **d):
         if self.json:
@@ -467,12 +421,11 @@ class UI:
             print(self.paint("2", "  " + d["line"]), flush=True)
         elif kind == "approval":
             print(self.paint("33", f"? {d['action']} {d['target']}"))
-            print(self.paint_diff(d["detail"]) if d["action"] != "run" else "  " + d["detail"])
+            print("  " + d["detail"] if d["action"] == "run" else self.paint_diff(d["detail"]))
         elif kind == "result" and d["is_error"]:
             print(self.paint("31", "x " + d["output"].split("\n")[0][:200]))
         elif kind == "done":
-            print(self.paint("2", f"done: {d['turns']} turns, {d['input_tokens']} in / "
-                                  f"{d['output_tokens']} out tokens"))
+            print(self.paint("2", "done: {turns} turns, {input_tokens} in / {output_tokens} out tokens".format(**d)))
         elif kind == "error":
             print(self.paint("31", "error: " + d["message"]), file=sys.stderr)
 
@@ -551,3 +504,67 @@ def build_system(root):
             text = (root / name).read_text(encoding="utf-8", errors="replace")
             return f"{system}\n\nProject instructions from {name}:\n{text[:20000]}"
     return system
+
+
+def make_provider(args):
+    """Pick a provider: --provider, then AGENT_PROVIDER, then Anthropic if its key is set."""
+    env = os.environ
+    name = args.provider or env.get("AGENT_PROVIDER") or ("anthropic" if env.get("ANTHROPIC_API_KEY") else "openai")
+    model, base = args.model or env.get("AGENT_MODEL"), args.base_url or env.get("AGENT_BASE_URL")
+    if name == "anthropic":
+        if not env.get("ANTHROPIC_API_KEY"):
+            raise AgentError("ANTHROPIC_API_KEY is not set")
+        return AnthropicProvider(env["ANTHROPIC_API_KEY"], model or DEFAULT_MODEL, base)
+    if name != "openai":
+        raise AgentError(f"unknown provider: {name} (use anthropic or openai)")
+    if not env.get("OPENAI_API_KEY") and not base:
+        raise AgentError("no provider configured: set ANTHROPIC_API_KEY, or OPENAI_API_KEY, "
+                         "or AGENT_BASE_URL for a local server")
+    if not model:
+        raise AgentError("set AGENT_MODEL or --model for the OpenAI-compatible provider")
+    return OpenAIProvider(env.get("OPENAI_API_KEY"), model, base)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="kidwit", description="A minimal coding agent.")
+    ap.add_argument("task", nargs="*", help="task to run once; omit for an interactive session")
+    ap.add_argument("--root", default=".", help="project directory (default: current)")
+    ap.add_argument("--provider", choices=["anthropic", "openai"])
+    ap.add_argument("--model")
+    ap.add_argument("--base-url")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--yes", action="store_true", help="never ask for approval")
+    mode.add_argument("--read-only", action="store_true", help="no writes or commands")
+    ap.add_argument("--json", action="store_true", help="emit JSON-lines events")
+    ap.add_argument("--no-log", action="store_true", help="disable .agent/audit.jsonl")
+    ap.add_argument("--version", action="version", version=f"kidwit {VERSION}")
+    args = ap.parse_args(argv)
+    ui, root = UI(args.json), Path(args.root).resolve()
+    try:
+        if not root.is_dir():
+            raise AgentError(f"not a directory: {root}")
+        provider = make_provider(args)
+    except AgentError as e:
+        ui.emit("error", message=str(e))
+        return 1
+    tools = Tools(root, ui, "auto" if args.yes else "read-only" if args.read_only else "ask", not args.no_log)
+    bot = Agent(provider, tools, ui, build_system(root))
+    if args.task:
+        return 0 if bot.run(" ".join(args.task)) is not None else 1
+    ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /exit quits.")
+    while True:
+        try:
+            line = ui.ask("> ")
+        except KeyboardInterrupt:
+            return 0
+        if line is None or line.strip() in ("/exit", "/quit"):
+            return 0
+        if line.strip() == "/clear":
+            bot.history.clear()
+            ui.emit("info", message="history cleared")
+        elif line.strip():
+            bot.run(line)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
