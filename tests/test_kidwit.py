@@ -673,9 +673,14 @@ def args(**kw):
     return SimpleNamespace(**{"provider": None, "model": None, "base_url": None, **kw})
 
 
+# Windows cannot start a subprocess without these, so tests that clear the environment keep them.
+SYSTEM_ENV = {k: os.environ[k] for k in ("SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "WINDIR")
+              if k in os.environ}
+
+
 @contextlib.contextmanager
 def env(**values):
-    with mock.patch.dict(os.environ, values, clear=True):
+    with mock.patch.dict(os.environ, {**SYSTEM_ENV, **values}, clear=True):
         yield
 
 
@@ -836,7 +841,7 @@ class EndToEndTests(ProviderTestCase):
         self.root = Path(self._tmp.name)
 
     def cli(self, *argv, stdin="", env_extra=None):
-        env = {"PATH": os.environ["PATH"], "HOME": str(self.root), **(env_extra or {})}
+        env = {**SYSTEM_ENV, "PATH": os.environ["PATH"], "HOME": str(self.root), **(env_extra or {})}
         proc = subprocess.run([sys.executable, str(Path(kidwit.__file__)), "--root", str(self.root), *argv],
                               input=stdin, capture_output=True, text=True, env=env, timeout=60)
         return proc, [json.loads(line) for line in proc.stdout.splitlines()]
@@ -1143,7 +1148,7 @@ class EvalSuiteTests(ProviderTestCase):
         out = Path(tempfile.mkdtemp()) / "results.json"
         argv = ["--task", "off-by-one", "--out", str(out), *extra, "--",
                 "--provider", "openai", "--model", "m", "--base-url", fake.url]
-        with contextlib.redirect_stdout(io.StringIO()) as printed, mock.patch.dict(os.environ, {"PATH": os.environ["PATH"]}, clear=True):
+        with contextlib.redirect_stdout(io.StringIO()) as printed, mock.patch.dict(os.environ, {**SYSTEM_ENV, "PATH": os.environ["PATH"]}, clear=True):
             code = run_evals.main(argv)
         return code, json.loads(out.read_text()), printed.getvalue()
 
