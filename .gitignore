@@ -13,5 +13,4 @@ PROJECT.md
 TASKS.md
 
 # Local secrets and benchmark output
-.env
 evals/results/
