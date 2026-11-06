@@ -166,6 +166,56 @@ class AnthropicProvider:
         return text, calls, (tokens_in, u.get("output_tokens", 0))
 
 
+class OpenAIProvider:
+    """OpenAI-compatible Chat Completions (OpenAI, OpenRouter, Ollama, LM Studio, vLLM)."""
+
+    def __init__(self, key, model, base=None):
+        self.key, self.model = key, model
+        self.base = (base or "https://api.openai.com/v1").rstrip("/")
+
+    @staticmethod
+    def convert(system, history):
+        msgs = [{"role": "system", "content": system}]
+        for m in history:
+            if m["role"] == "user":
+                msgs.append({"role": "user", "content": m["text"]})
+            elif m["role"] == "assistant":
+                calls = m.get("calls") or []
+                msg = {"role": "assistant", "content": m["text"] or (None if calls else "")}
+                if calls:
+                    msg["tool_calls"] = [{"id": c["id"], "type": "function", "function": {
+                        "name": c["name"], "arguments": json.dumps(c["input"])}} for c in calls]
+                msgs.append(msg)
+            else:
+                msgs += [{"role": "tool", "tool_call_id": r["id"], "content": r["output"]}
+                         for r in m["results"]]
+        return msgs
+
+    def chat(self, system, history, tools):
+        body = {"model": self.model, "messages": self.convert(system, history)}
+        if tools:
+            body["tools"] = [{"type": "function", "function": {
+                "name": t["name"], "description": t["description"],
+                "parameters": t["input_schema"]}} for t in tools]
+        headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
+        reply = post_json(f"{self.base}/chat/completions", headers, body)
+        try:
+            msg = reply["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            raise AgentError(f"unexpected API reply: {str(reply)[:500]}")
+        calls = []
+        for c in msg.get("tool_calls") or []:
+            raw = c["function"].get("arguments") or "{}"
+            try:
+                args = json.loads(raw)
+            except ValueError:
+                args = None
+            calls.append({"id": c["id"], "name": c["function"]["name"],
+                          "input": args if isinstance(args, dict) else {"_invalid_json": raw}})
+        u = reply.get("usage") or {}
+        return msg.get("content") or "", calls, (u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+
+
 def glob_re(pat):
     """Compile a glob ('*', '?', '**') to a regex. '**/' also matches zero directories."""
     out, i = "", 0
