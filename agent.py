@@ -95,6 +95,28 @@ WRITE_TOOLS = {"write_file", "edit_file", "run"}
 TOOL_NAMES = {t["name"] for t in TOOLS}
 
 
+def post_json(url, headers, body):
+    """POST JSON and return the parsed reply. Retries transient failures with backoff."""
+    data, err = json.dumps(body).encode(), "unknown error"
+    for attempt in range(4):
+        req = urllib.request.Request(url, data, {"Content-Type": "application/json", **headers})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:1500]
+            if e.code not in RETRY_CODES:
+                raise AgentError(f"HTTP {e.code}: {detail}")
+            err = f"HTTP {e.code}: {detail}"
+        except ValueError:
+            raise AgentError("the API returned a reply that is not valid JSON")
+        except OSError as e:
+            err = str(e)
+        if attempt < 3:
+            time.sleep(BACKOFF * 2 ** attempt)
+    raise AgentError(f"request failed after 4 attempts: {err}")
+
+
 def glob_re(pat):
     """Compile a glob ('*', '?', '**') to a regex. '**/' also matches zero directories."""
     out, i = "", 0
