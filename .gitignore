@@ -3,3 +3,15 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+
+# Private planning docs (not part of the open-source code)
+agent.md
+project.md
+tasks.md
+AGENT.md
+PROJECT.md
+TASKS.md
+
+# Local secrets and benchmark output
+.env
+evals/results/
