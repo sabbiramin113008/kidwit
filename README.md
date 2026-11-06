@@ -22,6 +22,16 @@ python3 src/kidwit.py "fix the failing test"
 
 Without a task, kidwit starts an interactive session and, on a color terminal, shows a small banner. The banner never appears with `--json`, with a task on the command line, or when output is piped. `/clear` resets the conversation, `/verbose` toggles detailed output, and `/exit` (or `/quit`, or end of input) leaves.
 
+## Status
+
+kidwit is early software. This is what has and has not been tested:
+
+1. **Tested live:** the OpenAI-compatible adapter with DeepSeek (`deepseek-chat`) on macOS with Python 3.14. The 8 tasks in `evals/` all pass end to end.
+2. **Not yet run against the real service:** the Anthropic adapter. It is covered by the offline tests, but nobody has run it against the live Anthropic API yet.
+3. **Untested:** Windows. The command runner uses Python's default shell there (`cmd.exe`), and killing a timed-out command's child processes is only verified on macOS and Linux-style systems. Linux and Python 3.9 to 3.13 are also untested for now.
+
+If you try it somewhere on this list, please open an issue with what happened.
+
 ## Configuration
 
 Environment variables:

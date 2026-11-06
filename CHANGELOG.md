@@ -10,6 +10,11 @@ All notable changes to kidwit are recorded here. The format follows
 
 First release.
 
+### Known limitations
+- Tested live only with the OpenAI-compatible adapter (DeepSeek) on macOS with Python 3.14.
+- The Anthropic adapter is covered by offline tests but has not been run against the live API.
+- Windows is untested. Linux and Python 3.9 to 3.13 are untested until CI runs.
+
 ### Added
 - A coding agent in one file of standard-library Python, with Anthropic and OpenAI-compatible providers.
 - Six tools: `list_files`, `search`, `read_file`, `write_file`, `edit_file` and `run`.
