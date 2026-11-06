@@ -1,0 +1,35 @@
+name: Bug report
+description: Something did not work as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what you got. Paste the output.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: kidwit version
+      description: The output of `kidwit --version`.
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+      description: For example Anthropic claude-sonnet-5-5, or DeepSeek deepseek-chat, or a local Ollama model.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python version
+      description: For example macOS 14, Python 3.14. Windows and Linux reports are especially welcome.
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: For a security problem, do not open an issue. See SECURITY.md.

@@ -1,15 +1,21 @@
 # kidwit
 
+[![PyPI](https://img.shields.io/pypi/v/kidwit?include_prereleases&label=PyPI)](https://pypi.org/project/kidwit/)
+[![CI](https://github.com/sabbiramin113008/kidwit/actions/workflows/ci.yml/badge.svg)](https://github.com/sabbiramin113008/kidwit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sabbiramin113008/kidwit/blob/main/LICENSE)
+
 A complete coding-agent engine in one file of standard-library Python, around 500 lines of code. It works inside one directory and asks before it changes anything.
 
 kidwit reads your code, edits files, runs commands and reports back, using native tool calling with Anthropic or any OpenAI-compatible API. It is a from-scratch build and a case study in how little a coding agent needs. It is not a replacement for mature agents.
 
+**Website:** [kidwit.sabbiramin.dev](https://kidwit.sabbiramin.dev) · **PyPI:** [pypi.org/project/kidwit](https://pypi.org/project/kidwit/) · [Changelog](https://github.com/sabbiramin113008/kidwit/blob/main/CHANGELOG.md) · [Issues](https://github.com/sabbiramin113008/kidwit/issues)
+
 ## Install
 
-You need Python 3.9 or newer. kidwit has no dependencies. From a clone of this repository:
+You need Python 3.9 or newer. kidwit has no dependencies. The current release is a candidate (`0.1.0rc1`), so the version is pinned:
 
 ```
-pipx install .            # or: pip install .
+pipx install kidwit==0.1.0rc1       # or: uv tool install kidwit==0.1.0rc1, or: pip install kidwit==0.1.0rc1
 export ANTHROPIC_API_KEY=sk-ant-...
 kidwit "fix the failing test"
 ```
@@ -22,9 +28,11 @@ curl -fsSL https://kidwit.sabbiramin.dev/install | sh
 
 The script is `scripts/install.sh` in this repository, so you can read it first. It never uses `sudo` and writes only inside your home directory. It installs with `pipx` or `uv` if you have one. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks its SHA-256 checksum, and puts a launcher at `~/.local/bin/kidwit`. If there is no release file yet, it installs the PyPI package into its own virtual environment instead. Set `KIDWIT_VERSION=0.1.0rc1` to pick a version, or `KIDWIT_DRY_RUN=1` to see what it would do.
 
-The whole engine is one file, so you can also run it with no install at all:
+The whole engine is one file, so you can also run it from a clone with no install at all:
 
 ```
+git clone https://github.com/sabbiramin113008/kidwit.git
+cd kidwit
 python3 src/kidwit.py "fix the failing test"
 ```
 
