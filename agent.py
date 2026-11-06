@@ -205,3 +205,17 @@ class Tools:
         if left > 0:
             out += f"\n[{left} more lines; use offset={offset + len(chunk)}]"
         return out or "(empty file, or offset is past the end)"
+
+    def confirm(self, action, target, detail):
+        """Ask before a write, edit or command. Raises ToolError if denied."""
+        if self.mode == "auto":
+            return
+        self.ui.emit("approval", action=action, target=target, detail=detail)
+        answer = (self.ui.ask("Allow? [y]es / [a]lways / [n]o / or type feedback: ") or "").strip()
+        low = answer.lower()
+        if low in ("y", "yes"):
+            return
+        if low in ("a", "always"):
+            self.mode = "auto"
+            return
+        raise ToolError("denied by user" + (f": {answer}" if low not in ("", "n", "no") else ""))
