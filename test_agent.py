@@ -2,6 +2,8 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -781,6 +783,82 @@ class CliTests(ToolTestCase):
         events = [json.loads(line) for line in out.splitlines()]
         self.assertEqual([e["type"] for e in events], ["tool", "result", "text", "done"])
         self.assertEqual(events[-1], {"type": "done", "turns": 2, "input_tokens": 8, "output_tokens": 10})
+
+
+class EndToEndTests(ProviderTestCase):
+    """The real CLI as a subprocess, --json mode, against a fake OpenAI-compatible server."""
+
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def cli(self, *argv, stdin="", env_extra=None):
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.root), **(env_extra or {})}
+        proc = subprocess.run([sys.executable, str(Path(agent.__file__)), "--root", str(self.root), *argv],
+                              input=stdin, capture_output=True, text=True, env=env, timeout=60)
+        return proc, [json.loads(line) for line in proc.stdout.splitlines()]
+
+    def script(self):
+        write = {"id": "call_1", "type": "function", "function": {
+            "name": "write_file", "arguments": json.dumps({"path": "hello.txt", "content": "hi\n"})}}
+        return self.api(
+            (200, {"choices": [{"message": {"content": None, "tool_calls": [write]}}],
+                   "usage": {"prompt_tokens": 10, "completion_tokens": 2}}),
+            (200, {"choices": [{"message": {"content": "Created hello.txt."}}],
+                   "usage": {"prompt_tokens": 20, "completion_tokens": 3}}))
+
+    def run_task(self, stdin):
+        fake = self.script()
+        proc, events = self.cli("--json", "--provider", "openai", "--model", "fake-model",
+                                "--base-url", fake.url, "create hello.txt", stdin=stdin)
+        return fake, proc, events
+
+    def test_approved_write(self):
+        fake, proc, events = self.run_task("y\n")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual([e["type"] for e in events], ["tool", "approval", "result", "text", "done"])
+        approval = events[1]
+        self.assertEqual((approval["action"], approval["target"]), ("write", "hello.txt"))
+        self.assertEqual((self.root / "hello.txt").read_text(), "hi\n")
+        self.assertEqual(events[-1], {"type": "done", "turns": 2, "input_tokens": 30, "output_tokens": 5})
+        self.assertEqual(events[2]["is_error"], False)
+        second = fake.requests[1]["body"]["messages"]
+        self.assertEqual(second[-1]["role"], "tool")
+        self.assertEqual(second[-1]["tool_call_id"], "call_1")
+        self.assertNotIn("authorization", fake.requests[0]["headers"])
+        self.assertEqual(fake.requests[0]["body"]["model"], "fake-model")
+
+    def test_eof_at_approval_means_no(self):
+        _, proc, events = self.run_task("")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = [e for e in events if e["type"] == "result"][0]
+        self.assertTrue(result["is_error"])
+        self.assertIn("denied", result["output"])
+        self.assertFalse((self.root / "hello.txt").exists())
+
+    def test_feedback_answer_is_passed_to_the_model(self):
+        fake, _, _ = self.run_task("write it somewhere else\n")
+        sent = fake.requests[1]["body"]["messages"][-1]["content"]
+        self.assertIn("write it somewhere else", sent)
+
+    def test_missing_key_error(self):
+        proc, events = self.cli("--json", "hello")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(events[0]["type"], "error")
+        self.assertIn("no provider configured", events[0]["message"])
+        proc, _ = self.cli("hello", env_extra={"AGENT_PROVIDER": "anthropic"})
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("ANTHROPIC_API_KEY", proc.stderr)
+
+    def test_api_failure_exits_1(self):
+        fake = self.api((400, {"error": "bad request"}))
+        proc, events = self.cli("--json", "--provider", "openai", "--model", "m",
+                                "--base-url", fake.url, "go")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertIn("bad request", events[-1]["message"])
 
 
 if __name__ == "__main__":
