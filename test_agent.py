@@ -1,9 +1,13 @@
+import contextlib
+import io
 import json
 import os
 import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -646,6 +650,137 @@ class SystemPromptTests(ToolTestCase):
     def test_instructions_are_clipped(self):
         self.put("AGENTS.md", "y" * 50000)
         self.assertLess(agent.build_system(self.root).count("y"), 20100)
+
+
+def args(**kw):
+    return SimpleNamespace(**{"provider": None, "model": None, "base_url": None, **kw})
+
+
+@contextlib.contextmanager
+def env(**values):
+    with mock.patch.dict(os.environ, values, clear=True):
+        yield
+
+
+class ProviderSelectionTests(unittest.TestCase):
+    def test_anthropic_when_key_is_set(self):
+        with env(ANTHROPIC_API_KEY="k", OPENAI_API_KEY="o", AGENT_MODEL="m"):
+            p = agent.make_provider(args())
+        self.assertIsInstance(p, agent.AnthropicProvider)
+        self.assertEqual((p.key, p.model), ("k", "m"))
+
+    def test_default_model_for_anthropic(self):
+        with env(ANTHROPIC_API_KEY="k"):
+            self.assertEqual(agent.make_provider(args()).model, agent.DEFAULT_MODEL)
+
+    def test_flag_beats_env_beats_key(self):
+        with env(ANTHROPIC_API_KEY="k", OPENAI_API_KEY="o", AGENT_PROVIDER="openai", AGENT_MODEL="m"):
+            self.assertIsInstance(agent.make_provider(args()), agent.OpenAIProvider)
+            self.assertIsInstance(agent.make_provider(args(provider="anthropic")), agent.AnthropicProvider)
+
+    def test_openai_compatible_local_server_needs_no_key(self):
+        with env(AGENT_BASE_URL="http://localhost:11434/v1", AGENT_MODEL="llama"):
+            p = agent.make_provider(args())
+        self.assertIsInstance(p, agent.OpenAIProvider)
+        self.assertEqual((p.key, p.base), (None, "http://localhost:11434/v1"))
+
+    def test_flags_override_env(self):
+        with env(OPENAI_API_KEY="o", AGENT_MODEL="env-model", AGENT_BASE_URL="http://env"):
+            p = agent.make_provider(args(model="flag-model", base_url="http://flag/"))
+        self.assertEqual((p.model, p.base), ("flag-model", "http://flag"))
+
+    def test_clear_errors(self):
+        cases = [({}, args(), "no provider configured"),
+                 ({"OPENAI_API_KEY": "o"}, args(), "AGENT_MODEL"),
+                 ({}, args(provider="anthropic"), "ANTHROPIC_API_KEY"),
+                 ({"AGENT_PROVIDER": "gemini"}, args(), "unknown provider")]
+        for values, a, message in cases:
+            with self.subTest(message), env(**values), self.assertRaises(agent.AgentError) as cm:
+                agent.make_provider(a)
+            self.assertIn(message, str(cm.exception))
+
+
+class CliTests(ToolTestCase):
+    def run_main(self, *argv, provider=None, stdin=""):
+        out, err = io.StringIO(), io.StringIO()
+        patches = [contextlib.redirect_stdout(out), contextlib.redirect_stderr(err),
+                   mock.patch("sys.stdin", io.StringIO(stdin)), env()]
+        if provider:
+            patches.append(mock.patch.object(agent, "make_provider", lambda a: provider))
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            code = agent.main(["--root", str(self.root), *argv])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_version(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            agent.main(["--version"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn(agent.VERSION, out.getvalue())
+
+    def test_missing_config_exits_1_with_message(self):
+        code, out, err = self.run_main("do it")
+        self.assertEqual(code, 1)
+        self.assertIn("no provider configured", err)
+
+    def test_missing_config_in_json_mode_is_an_event(self):
+        code, out, _ = self.run_main("--json", "do it")
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(out)["type"], "error")
+
+    def test_bad_root(self):
+        code, _, err = self.run_main("--root", "/definitely/not/here", "x")
+        self.assertEqual(code, 1)
+        self.assertIn("not a directory", err)
+
+    def test_one_shot_exit_codes(self):
+        ok = ScriptedProvider(("all done", [], (1, 1)))
+        code, out, _ = self.run_main("fix", "the", "bug", provider=ok)
+        self.assertEqual(code, 0)
+        self.assertIn("all done", out)
+        self.assertEqual(ok.seen[0][1][0]["text"], "fix the bug")
+        bad = ScriptedProvider(agent.AgentError("boom"))
+        code, _, err = self.run_main("fix", provider=bad)
+        self.assertEqual(code, 1)
+        self.assertIn("boom", err)
+
+    def test_yes_and_read_only_modes(self):
+        p = ScriptedProvider(("ok", [], (1, 1)))
+        self.run_main("--read-only", "x", provider=p)
+        self.assertEqual(p.seen[0][2], ["list_files", "search", "read_file"])
+        p = ScriptedProvider(("", [call("1", "write_file", path="a.txt", content="hi")], (1, 1)), ("ok", [], (1, 1)))
+        self.run_main("--yes", "x", provider=p)
+        self.assertEqual((self.root / "a.txt").read_text(), "hi")
+        self.assertTrue((self.root / ".agent/audit.jsonl").exists())
+
+    def test_no_log_flag(self):
+        p = ScriptedProvider(("", [call("1", "write_file", path="a.txt", content="hi")], (1, 1)), ("ok", [], (1, 1)))
+        self.run_main("--yes", "--no-log", "x", provider=p)
+        self.assertFalse((self.root / ".agent").exists())
+
+    def test_yes_and_read_only_conflict(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            agent.main(["--yes", "--read-only", "x"])
+
+    def test_repl_clear_and_exit(self):
+        p = ScriptedProvider(("one", [], (1, 1)), ("two", [], (1, 1)))
+        code, out, _ = self.run_main("--json", provider=p, stdin="first\n\n/clear\nsecond\n/exit\nnever\n")
+        self.assertEqual(code, 0)
+        self.assertEqual(p.seen[1][1], [{"role": "user", "text": "second"}])
+        self.assertEqual(len(p.steps), 0)
+
+    def test_repl_quits_on_eof(self):
+        code, _, _ = self.run_main("--json", provider=ScriptedProvider(), stdin="")
+        self.assertEqual(code, 0)
+
+    def test_json_mode_emits_only_json_lines(self):
+        p = ScriptedProvider(("", [call("1", "list_files")], (3, 4)), ("done", [], (5, 6)))
+        _, out, _ = self.run_main("--json", "go", provider=p)
+        events = [json.loads(line) for line in out.splitlines()]
+        self.assertEqual([e["type"] for e in events], ["tool", "result", "text", "done"])
+        self.assertEqual(events[-1], {"type": "done", "turns": 2, "input_tokens": 8, "output_tokens": 10})
 
 
 if __name__ == "__main__":
