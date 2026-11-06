@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = __version__ = "0.1.0"
+VERSION = __version__ = "0.1.0rc1"
 MAX_TURNS = 50
 MAX_TOKENS = 8192
 MAX_TOOL_OUTPUT = 12000
