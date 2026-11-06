@@ -485,3 +485,39 @@ class UI:
             return input(prompt)
         except EOFError:
             return None
+
+
+class Agent:
+    def __init__(self, provider, tools, ui, system):
+        self.provider, self.tools, self.ui, self.system = provider, tools, ui, system
+        self.history = []
+
+    def run(self, task):
+        """Run one task to completion. Returns the final text, or None on error/interrupt."""
+        self.history.append({"role": "user", "text": task})
+        tokens_in = tokens_out = 0
+        try:
+            for turn in range(1, MAX_TURNS + 1):
+                self.trim()
+                text, calls, (n_in, n_out) = self.provider.chat(
+                    self.system, self.history, self.tools.available())
+                tokens_in, tokens_out = tokens_in + n_in, tokens_out + n_out
+                self.history.append({"role": "assistant", "calls": calls,
+                                     "text": text or ("" if calls else "(empty response)")})
+                if text:
+                    self.ui.emit("text", text=text)
+                if not calls:
+                    self.ui.emit("done", turns=turn, input_tokens=tokens_in, output_tokens=tokens_out)
+                    return text
+                results = []
+                for c in calls:
+                    self.ui.emit("tool", id=c["id"], name=c["name"], input=c["input"])
+                    output, is_error = self.tools.call(c["name"], c["input"])
+                    self.ui.emit("result", id=c["id"], output=output, is_error=is_error)
+                    results.append({"id": c["id"], "output": output, "is_error": is_error})
+                self.history.append({"role": "tool", "results": results})
+            self.ui.emit("error", message=f"stopped after {MAX_TURNS} turns without finishing")
+        except (KeyboardInterrupt, AgentError) as e:
+            self.repair()
+            self.ui.emit("error", message=str(e) or "interrupted")
+        return None
