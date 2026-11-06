@@ -219,3 +219,18 @@ class Tools:
             self.mode = "auto"
             return
         raise ToolError("denied by user" + (f": {answer}" if low not in ("", "n", "no") else ""))
+
+    def audit(self, action, target, **extra):
+        """Append a JSON line to .agent/audit.jsonl. Failures never break the agent."""
+        if not self.log:
+            return
+        try:
+            folder = self.root / ".agent"
+            folder.mkdir(exist_ok=True)
+            if not (folder / ".gitignore").exists():
+                (folder / ".gitignore").write_text("*\n")
+            entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "action": action, "target": target}
+            with (folder / "audit.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps({**entry, **extra}) + "\n")
+        except Exception:
+            pass
