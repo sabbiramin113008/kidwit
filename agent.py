@@ -117,6 +117,55 @@ def post_json(url, headers, body):
     raise AgentError(f"request failed after 4 attempts: {err}")
 
 
+class AnthropicProvider:
+    """Anthropic Messages API. chat() contract: PROJECT.md section 5."""
+
+    def __init__(self, key, model=DEFAULT_MODEL, base=None):
+        self.key, self.model = key, model
+        self.base = (base or "https://api.anthropic.com").rstrip("/")
+
+    @staticmethod
+    def convert(history):
+        """Neutral history -> API messages, merging consecutive same-role messages."""
+        msgs = []
+        for m in history:
+            if m["role"] == "user":
+                role, blocks = "user", [{"type": "text", "text": m["text"]}]
+            elif m["role"] == "assistant":
+                role = "assistant"
+                blocks = [{"type": "text", "text": m["text"]}] if m["text"] else []
+                blocks += [{"type": "tool_use", **c} for c in m.get("calls", [])]
+            else:
+                role = "user"
+                blocks = [{"type": "tool_result", "tool_use_id": r["id"], "content": r["output"],
+                           "is_error": r["is_error"]} for r in m["results"]]
+            if msgs and msgs[-1]["role"] == role:
+                msgs[-1]["content"] += blocks
+            else:
+                msgs.append({"role": role, "content": blocks})
+        return msgs
+
+    def chat(self, system, history, tools):
+        cache = {"type": "ephemeral"}
+        msgs = self.convert(history)
+        if msgs:
+            msgs[-1]["content"][-1]["cache_control"] = cache
+        body = {"model": self.model, "max_tokens": MAX_TOKENS, "messages": msgs,
+                "system": [{"type": "text", "text": system, "cache_control": cache}]}
+        if tools:
+            body["tools"] = tools
+        headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
+        reply = post_json(f"{self.base}/v1/messages", headers, body)
+        blocks = reply.get("content") or []
+        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        calls = [{"id": b["id"], "name": b["name"], "input": b.get("input") or {}}
+                 for b in blocks if b.get("type") == "tool_use"]
+        u = reply.get("usage") or {}
+        tokens_in = sum(u.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                              "cache_creation_input_tokens"))
+        return text, calls, (tokens_in, u.get("output_tokens", 0))
+
+
 def glob_re(pat):
     """Compile a glob ('*', '?', '**') to a regex. '**/' also matches zero directories."""
     out, i = "", 0
