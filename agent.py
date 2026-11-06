@@ -521,3 +521,22 @@ class Agent:
             self.repair()
             self.ui.emit("error", message=str(e) or "interrupted")
         return None
+
+    def repair(self):
+        """Give every tool call a result, or the next API request is rejected."""
+        last = self.history[-1] if self.history else {}
+        if last.get("role") == "assistant" and last.get("calls"):
+            self.history.append({"role": "tool", "results": [
+                {"id": c["id"], "output": "interrupted before this tool ran", "is_error": True}
+                for c in last["calls"]]})
+
+    def trim(self):
+        """Drop old tool output when the history outgrows CONTEXT_BUDGET. Last two messages stay."""
+        size = len(json.dumps(self.history))
+        for m in self.history[:-2]:
+            for r in m.get("results", []):
+                if size <= CONTEXT_BUDGET:
+                    return
+                if len(r["output"]) > 200:
+                    size -= len(r["output"]) - len(OLD_OUTPUT)
+                    r["output"] = OLD_OUTPUT
