@@ -233,7 +233,10 @@ def glob_re(pat):
 def kill_tree(proc):
     """Kill a command and its children (a new session makes the process group killable)."""
     try:
-        os.killpg(proc.pid, signal.SIGKILL) if os.name == "posix" else proc.kill()
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:  # no process groups on Windows: taskkill /T takes the whole tree
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
     except OSError:
         pass
 

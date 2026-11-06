@@ -50,7 +50,7 @@ class ToolTestCase(unittest.TestCase):
     def put(self, name, content="", binary=False):
         p = self.root / name
         p.parent.mkdir(parents=True, exist_ok=True)
-        (p.write_bytes if binary else p.write_text)(content)
+        p.write_bytes(content if binary else content.encode())
         return p
 
     def call(self, name, **args):
@@ -204,7 +204,8 @@ class EditTests(ToolTestCase):
 
 class RunTests(ToolTestCase):
     def test_exit_code_and_output(self):
-        out, err = self.call("run", command="echo hi; echo oops 1>&2; exit 3")
+        code = "import sys; print('hi'); print('oops', file=sys.stderr); sys.exit(3)"
+        out, err = self.call("run", command=f'"{sys.executable}" -c "{code}"')
         self.assertFalse(err)
         self.assertTrue(out.startswith("[exit code 3]"))
         self.assertIn("hi", out)
@@ -223,6 +224,13 @@ class RunTests(ToolTestCase):
         self.assertIn("marker.txt", self.call("run", command="ls")[0])
         self.assertTrue(self.call("run", command="cat")[0].startswith("[exit code 0]"))
 
+    def test_timeout_returns_promptly(self):
+        start = time.time()
+        out, _ = self.call("run", command=f'"{sys.executable}" -c "import time; time.sleep(60)"', timeout=1)
+        self.assertLess(time.time() - start, 10)
+        self.assertIn("timed out after 1s", out)
+
+    @unittest.skipIf(os.name == "nt", "uses POSIX shell syntax and signals")
     def test_timeout_kills_child_processes(self):
         start = time.time()
         out, _ = self.call("run", command="(sleep 60) & echo $!; sleep 60", timeout=1)
