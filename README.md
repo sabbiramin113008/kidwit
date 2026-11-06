@@ -10,6 +10,12 @@ kidwit reads your code, edits files, runs commands and reports back, using nativ
 
 **Website:** [kidwit.sabbiramin.dev](https://kidwit.sabbiramin.dev) · **PyPI:** [pypi.org/project/kidwit](https://pypi.org/project/kidwit/) · [Changelog](https://github.com/sabbiramin113008/kidwit/blob/main/CHANGELOG.md) · [Issues](https://github.com/sabbiramin113008/kidwit/issues)
 
+## Demo
+
+![kidwit fixing a failing test: it reads the files, asks before running the tests, shows the diff, and asks before applying it](https://raw.githubusercontent.com/sabbiramin113008/kidwit/main/docs/demo.gif)
+
+A real, unedited session: kidwit finds and fixes an off-by-one in a small project. The model is `deepseek-chat` through the OpenAI-compatible adapter. The three permission prompts (two test runs and one edit) are answered with `y`. Long waits for the model are shortened to two seconds. The recording is [`docs/demo.cast`](https://github.com/sabbiramin113008/kidwit/blob/main/docs/demo.cast), which you can play with `asciinema play docs/demo.cast`, or watch with pause and copy at [kidwit.sabbiramin.dev](https://kidwit.sabbiramin.dev/#demo).
+
 ## Install
 
 You need Python 3.9 or newer. kidwit has no dependencies. The current release is a candidate (`0.1.0rc1`), so the version is pinned:
