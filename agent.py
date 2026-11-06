@@ -437,3 +437,51 @@ class Tools:
             proc.stdout.close()
         status = f"[timed out after {timeout:g}s and was killed]" if expired else f"[exit code {proc.returncode}]"
         return status + "\n" + "".join(lines)
+
+
+class UI:
+    """Terminal output, or JSON-lines events with --json (PROJECT.md section 6.4)."""
+
+    def __init__(self, json_mode=False):
+        self.json = json_mode
+        self.color = not json_mode and sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+    def paint(self, code, text):
+        return f"\033[{code}m{text}\033[0m" if self.color else text
+
+    def paint_diff(self, text):
+        codes = {"+": "32", "-": "31", "@": "36"}
+        return "\n".join(self.paint(codes.get(line[:1], "0"), line) if line[:3] not in ("+++", "---")
+                         else line for line in text.splitlines())
+
+    def emit(self, kind, **d):
+        if self.json:
+            print(json.dumps({"type": kind, **d}), flush=True)
+        elif kind == "text":
+            print(d["text"])
+        elif kind == "info":
+            print(self.paint("2", d["message"]))
+        elif kind == "tool":
+            print(self.paint("36", f"> {d['name']} {json.dumps(d['input'])[:120]}"))
+        elif kind == "output":
+            print(self.paint("2", "  " + d["line"]), flush=True)
+        elif kind == "approval":
+            print(self.paint("33", f"? {d['action']} {d['target']}"))
+            print(self.paint_diff(d["detail"]) if d["action"] != "run" else "  " + d["detail"])
+        elif kind == "result" and d["is_error"]:
+            print(self.paint("31", "x " + d["output"].split("\n")[0][:200]))
+        elif kind == "done":
+            print(self.paint("2", f"done: {d['turns']} turns, {d['input_tokens']} in / "
+                                  f"{d['output_tokens']} out tokens"))
+        elif kind == "error":
+            print(self.paint("31", "error: " + d["message"]), file=sys.stderr)
+
+    def ask(self, prompt):
+        """Read one line from the user. Returns None on EOF."""
+        if self.json:
+            line = sys.stdin.readline()
+            return line.rstrip("\n") if line else None
+        try:
+            return input(prompt)
+        except EOFError:
+            return None
