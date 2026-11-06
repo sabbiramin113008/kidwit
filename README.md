@@ -18,10 +18,10 @@ A real, unedited session: kidwit finds and fixes an off-by-one in a small projec
 
 ## Install
 
-You need Python 3.10 or newer. kidwit has no dependencies. The current release is a candidate (`0.1.0rc2`), so the version is pinned:
+You need Python 3.10 or newer. kidwit has no dependencies.
 
 ```
-pipx install kidwit==0.1.0rc2       # or: uv tool install kidwit==0.1.0rc2, or: pip install kidwit==0.1.0rc2
+pipx install kidwit                 # or: uv tool install kidwit, or: pip install kidwit
 export ANTHROPIC_API_KEY=sk-ant-...
 kidwit "fix the failing test"
 ```
@@ -32,7 +32,7 @@ Or with one line, on macOS and Linux:
 curl -fsSL https://kidwit.sabbiramin.dev/install | sh
 ```
 
-The script is `scripts/install.sh` in this repository, so you can read it first. It never uses `sudo` and writes only inside your home directory. It installs with `pipx` or `uv` if you have one. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks its SHA-256 checksum, and puts a launcher at `~/.local/bin/kidwit`. If there is no release file yet, it installs the PyPI package into its own virtual environment instead. Set `KIDWIT_VERSION=0.1.0rc2` to pick a version, or `KIDWIT_DRY_RUN=1` to see what it would do.
+The script is `scripts/install.sh` in this repository, so you can read it first. It never uses `sudo` and writes only inside your home directory. It installs with `pipx` or `uv` if you have one. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks its SHA-256 checksum, and puts a launcher at `~/.local/bin/kidwit`. If there is no release file yet, it installs the PyPI package into its own virtual environment instead. Set `KIDWIT_VERSION=0.1.0` to pick a version, or `KIDWIT_DRY_RUN=1` to see what it would do.
 
 The whole engine is one file, so you can also run it from a clone with no install at all:
 
@@ -50,8 +50,8 @@ kidwit is early software. This is what has and has not been tested:
 
 1. **Tested live:** the OpenAI-compatible adapter with DeepSeek (`deepseek-chat`) on macOS with Python 3.14. The 8 tasks in `evals/` all pass end to end.
 2. **Not yet run against the real service:** the Anthropic adapter. It is covered by the offline tests, but nobody has run it against the live Anthropic API yet.
-3. **Tests pass in CI on Linux, macOS and Windows,** with Python 3.14. CI runs the offline tests and the eval self-test, not a live model. Nobody has run kidwit against a live model on Linux or Windows yet. On Windows the `run` tool uses `cmd.exe`, so commands the model writes in Unix shell syntax may fail there.
-4. **Python versions:** CI runs 3.14 only. 3.10 to 3.13 passed once on Linux and macOS, and are not part of the regular checks yet. Python 3.9 is not supported from `0.1.0rc2` on.
+3. **Tests pass in CI** on Linux with Python 3.10, 3.11, 3.12, 3.13 and 3.14, and on macOS and Windows with 3.10 and 3.14. CI runs the offline tests and the eval self-test, not a live model. Nobody has run kidwit against a live model on Linux or Windows yet. On Windows the `run` tool uses `cmd.exe`, so commands the model writes in Unix shell syntax may fail there.
+4. **Python 3.9 and older are not supported.**
 
 If you try it somewhere on this list, please open an issue with what happened.
 

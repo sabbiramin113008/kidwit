@@ -6,6 +6,16 @@ All notable changes to kidwit are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-07
+
+The first stable release. It is the same code as 0.1.0rc2, with the checks widened to every supported Python version.
+
+### Known limitations
+- Tested live only with the OpenAI-compatible adapter (DeepSeek), on macOS with Python 3.14.
+- The Anthropic adapter is covered by offline tests but has not been run against the live API.
+- No live-model runs yet on Linux or Windows. CI runs the offline tests on Linux (Python 3.10 to 3.14) and on macOS and Windows (3.10 and 3.14).
+- On Windows the `run` tool uses `cmd.exe`, so commands written in Unix shell syntax may fail.
+
 ## [0.1.0rc2] - 2026-11-07
 
 The second release candidate.
