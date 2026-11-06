@@ -393,8 +393,8 @@ class Tools:
 class UI:
     """Terminal output, or JSON-lines events with --json (PROJECT.md section 6.4)."""
 
-    def __init__(self, json_mode=False):
-        self.json = json_mode
+    def __init__(self, json_mode=False, verbose=False):
+        self.json, self.verbose = json_mode, verbose
         self.color = not json_mode and sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
     def paint(self, code, text):
@@ -412,12 +412,12 @@ class UI:
         if self.json:
             print(json.dumps({"type": kind, **d}), flush=True)
         elif kind == "text":
-            print(d["text"])
+            print("\n" + d["text"])
         elif kind == "info":
             print(self.paint("2", d["message"]))
         elif kind == "tool":
-            print(self.paint("36", f"> {d['name']} {json.dumps(d['input'])[:120]}"))
-        elif kind == "output":
+            print(self.paint("2", f"- {d['name']} {json.dumps(d['input'])[:120 if self.verbose else 60]}"))
+        elif kind == "output" and self.verbose:
             print(self.paint("2", "  " + d["line"]), flush=True)
         elif kind == "approval":
             print(self.paint("33", f"? {d['action']} {d['target']}"))
@@ -536,10 +536,11 @@ def main(argv=None):
     mode.add_argument("--yes", action="store_true", help="never ask for approval")
     mode.add_argument("--read-only", action="store_true", help="no writes or commands")
     ap.add_argument("--json", action="store_true", help="emit JSON-lines events")
+    ap.add_argument("--verbose", action="store_true", help="show live command output and full tool calls")
     ap.add_argument("--no-log", action="store_true", help="disable .agent/audit.jsonl")
     ap.add_argument("--version", action="version", version=f"kidwit {VERSION}")
     args = ap.parse_args(argv)
-    ui, root = UI(args.json), Path(args.root).resolve()
+    ui, root = UI(args.json, args.verbose), Path(args.root).resolve()
     try:
         if not root.is_dir():
             raise AgentError(f"not a directory: {root}")

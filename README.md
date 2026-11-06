@@ -45,6 +45,7 @@ Flags:
 | `--yes` | Never ask for approval. |
 | `--read-only` | Offer only the read tools. Writes and commands are not available. |
 | `--json` | Print JSON-lines events instead of text. |
+| `--verbose` | Show live command output and full tool arguments. By default kidwit prints one short dim line per tool call and then the answer. |
 | `--no-log` | Do not write `.agent/audit.jsonl`. |
 | `--version` | Print the version. |
 

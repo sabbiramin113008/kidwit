@@ -886,5 +886,40 @@ class BannerTests(unittest.TestCase):
         self.assertNotIn("█", out.getvalue())
 
 
+class QuietOutputTests(unittest.TestCase):
+    def show(self, verbose, *events):
+        ui, out = agent.UI(verbose=verbose), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            for kind, data in events:
+                ui.emit(kind, **data)
+        return out.getvalue()
+
+    TOOL = ("tool", {"id": "1", "name": "run", "input": {"command": "x" * 200}})
+    OUTPUT = ("output", {"line": "noisy test output"})
+
+    def test_quiet_hides_command_output_and_shortens_tool_calls(self):
+        out = self.show(False, self.TOOL, self.OUTPUT)
+        self.assertNotIn("noisy test output", out)
+        self.assertIn("- run", out)
+        self.assertLess(len(out), 100)
+
+    def test_verbose_shows_everything(self):
+        out = self.show(True, self.TOOL, self.OUTPUT)
+        self.assertIn("noisy test output", out)
+        self.assertGreater(len(out), len(self.show(False, self.TOOL, self.OUTPUT)) + 60)
+
+    def test_answer_text_and_errors_always_show(self):
+        out = self.show(False, ("text", {"text": "the answer"}),
+                        ("result", {"id": "1", "output": "boom", "is_error": True}))
+        self.assertIn("the answer", out)
+        self.assertIn("boom", out)
+
+    def test_json_mode_is_unaffected_by_quiet(self):
+        ui, out = agent.UI(json_mode=True), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ui.emit(*self.OUTPUT[:1], **self.OUTPUT[1])
+        self.assertEqual(json.loads(out.getvalue()), {"type": "output", "line": "noisy test output"})
+
+
 if __name__ == "__main__":
     unittest.main()
