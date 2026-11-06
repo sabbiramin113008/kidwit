@@ -540,3 +540,14 @@ class Agent:
                 if len(r["output"]) > 200:
                     size -= len(r["output"]) - len(OLD_OUTPUT)
                     r["output"] = OLD_OUTPUT
+
+
+def build_system(root):
+    """System prompt plus the project's AGENTS.md or CLAUDE.md, if present."""
+    system = SYSTEM.format(root=root, os=f"{platform.system()} {platform.release()}",
+                           shell=os.environ.get("SHELL") or os.environ.get("COMSPEC") or "sh")
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        if (root / name).is_file():
+            text = (root / name).read_text(encoding="utf-8", errors="replace")
+            return f"{system}\n\nProject instructions from {name}:\n{text[:20000]}"
+    return system
