@@ -14,3 +14,8 @@ TASKS.md
 
 # Local secrets and benchmark output
 evals/results/
+
+# Build output
+dist/
+build/
+*.egg-info/

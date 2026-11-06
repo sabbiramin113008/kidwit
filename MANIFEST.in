@@ -1,0 +1,6 @@
+include LICENSE README.md CHANGELOG.md
+graft tests
+graft evals
+prune evals/results
+include scripts/check.sh
+global-exclude __pycache__ *.py[cod] .DS_Store

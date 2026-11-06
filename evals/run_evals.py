@@ -6,7 +6,7 @@
   python3 evals/run_evals.py --task off-by-one --task crlf-file
   python3 evals/run_evals.py -- --provider openai --model deepseek-chat --base-url URL
 
-Arguments after `--` go to agent.py. The agent runs with --yes inside a throwaway directory,
+Arguments after `--` go to kidwit. The agent runs with --yes inside a throwaway directory,
 but its commands are not sandboxed: they run as you. Dangerous commands still need approval,
 and stdin is closed, so they are denied. Run this only on a machine where that is acceptable.
 Results are printed and saved to evals/results/<timestamp>.json.
@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from evals.tasks import TASKS  # noqa: E402
 
-AGENT = HERE.parent / "agent.py"
+AGENT = HERE.parent / "src" / "kidwit.py"
 
 
 def write_files(root, files):

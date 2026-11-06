@@ -131,13 +131,13 @@ if [ "$INTERACTIVE" -eq 1 ]; then
   echo "${BOLD}approvals${RESET}  answer ${GREEN}y${RESET} / ${YELLOW}a${RESET} (always) / n, or type feedback. ${DIM}/clear resets, /exit quits.${RESET}"
   if [ "$DEMO" -eq 1 ]; then
     make_demo
-    exec python3 "$HERE/agent.py" --root "$DEMO_DIR" "$@"
+    exec python3 "$HERE/src/kidwit.py" --root "$DEMO_DIR" "$@"
   fi
-  exec python3 "$HERE/agent.py" "$@"
+  exec python3 "$HERE/src/kidwit.py" "$@"
 fi
 
 if [ "$#" -gt 0 ]; then
-  exec python3 "$HERE/agent.py" "$@"
+  exec python3 "$HERE/src/kidwit.py" "$@"
 fi
 
 banner
@@ -146,7 +146,7 @@ echo "${BOLD}model${RESET}      ${CYAN}$AGENT_MODEL${RESET} ${DIM}via $AGENT_BAS
 echo "${BOLD}approvals${RESET}  answer each prompt with ${GREEN}y${RESET} / ${YELLOW}a${RESET} (always) / n"
 echo
 set +e
-python3 "$HERE/agent.py" --root "$DEMO_DIR" "fix the failing test"
+python3 "$HERE/src/kidwit.py" --root "$DEMO_DIR" "fix the failing test"
 status=$?
 set -e
 

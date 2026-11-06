@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """kidwit: a minimal coding-agent engine. Standard library only.
 
-Usage: python3 agent.py "fix the failing test"   (no task: REPL; --json: JSON-lines events)
+Usage: kidwit "fix the failing test"   (no task: REPL; --json: JSON-lines events)
+Also runs as a single file: python3 kidwit.py "fix the failing test"
 """
 import argparse
 import difflib
@@ -18,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = __version__ = "0.1.0"
 MAX_TURNS = 50
 MAX_TOKENS = 8192
 MAX_TOOL_OUTPUT = 12000
@@ -121,7 +122,7 @@ def post_json(url, headers, body):
 
 
 class Provider:
-    """chat(system, history, tools) -> (text, calls, (tokens_in, tokens_out)). PROJECT.md section 5."""
+    """chat(system, history, tools) -> (text, calls, (tokens_in, tokens_out)); calls are {id, name, input} dicts."""
 
     def __init__(self, key, model, base=None):
         self.key, self.model, self.base = key, model, (base or self.default_base).rstrip("/")
@@ -461,7 +462,7 @@ class Tools:
 
 
 class UI:
-    """Terminal output, or JSON-lines events with --json (PROJECT.md section 6.4)."""
+    """Terminal output, or JSON-lines events with --json (see the event table in the README)."""
 
     def __init__(self, json_mode=False, verbose=False):
         self.json, self.verbose = json_mode, verbose

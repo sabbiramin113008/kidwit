@@ -14,7 +14,8 @@ from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import agent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+import kidwit  # noqa: E402
 from evals import run_evals
 from evals.tasks import TASKS
 
@@ -44,7 +45,7 @@ class ToolTestCase(unittest.TestCase):
         self.tools = self.make()
 
     def make(self, mode="auto", **kw):
-        return agent.Tools(self.root, self.ui, mode, **kw)
+        return kidwit.Tools(self.root, self.ui, mode, **kw)
 
     def put(self, name, content="", binary=False):
         p = self.root / name
@@ -71,7 +72,7 @@ class DispatchTests(ToolTestCase):
         self.put("big.txt", "x" * 50000)
         out, err = self.call("read_file", path="big.txt")
         self.assertFalse(err)
-        self.assertLess(len(out), agent.MAX_TOOL_OUTPUT + 100)
+        self.assertLess(len(out), kidwit.MAX_TOOL_OUTPUT + 100)
         self.assertIn("clipped", out)
 
 
@@ -348,8 +349,8 @@ class FakeAPI:
 
 class ProviderTestCase(unittest.TestCase):
     def setUp(self):
-        agent.BACKOFF = 0
-        self.addCleanup(setattr, agent, "BACKOFF", 2)
+        kidwit.BACKOFF = 0
+        self.addCleanup(setattr, kidwit, "BACKOFF", 2)
 
     def api(self, *replies):
         fake = FakeAPI(replies)
@@ -367,27 +368,27 @@ HISTORY = [
 class PostJsonTests(ProviderTestCase):
     def test_retries_529_then_succeeds(self):
         fake = self.api((529, {"error": "overloaded"}), (503, {}), (200, {"ok": True}))
-        self.assertEqual(agent.post_json(fake.url, {}, {"a": 1}), {"ok": True})
+        self.assertEqual(kidwit.post_json(fake.url, {}, {"a": 1}), {"ok": True})
         self.assertEqual(len(fake.requests), 3)
 
     def test_gives_up_after_four_attempts(self):
         fake = self.api(*[(529, {"error": "overloaded"})] * 5)
-        with self.assertRaises(agent.AgentError) as cm:
-            agent.post_json(fake.url, {}, {})
+        with self.assertRaises(kidwit.AgentError) as cm:
+            kidwit.post_json(fake.url, {}, {})
         self.assertIn("4 attempts", str(cm.exception))
         self.assertEqual(len(fake.requests), 4)
 
     def test_400_fails_immediately_with_body(self):
         fake = self.api((400, {"error": "bad model name"}), (200, {}))
-        with self.assertRaises(agent.AgentError) as cm:
-            agent.post_json(fake.url, {}, {})
+        with self.assertRaises(kidwit.AgentError) as cm:
+            kidwit.post_json(fake.url, {}, {})
         self.assertIn("400", str(cm.exception))
         self.assertIn("bad model name", str(cm.exception))
         self.assertEqual(len(fake.requests), 1)
 
     def test_network_error_is_retried_then_reported(self):
-        with self.assertRaises(agent.AgentError):
-            agent.post_json("http://127.0.0.1:1/x", {}, {})
+        with self.assertRaises(kidwit.AgentError):
+            kidwit.post_json("http://127.0.0.1:1/x", {}, {})
 
 
 class AnthropicTests(ProviderTestCase):
@@ -398,8 +399,8 @@ class AnthropicTests(ProviderTestCase):
 
     def test_request_shape_and_parsing(self):
         fake = self.api((200, self.REPLY))
-        p = agent.AnthropicProvider("sk-test", "model-x", fake.url)
-        text, calls, tokens = p.chat("SYS", HISTORY, agent.TOOLS)
+        p = kidwit.AnthropicProvider("sk-test", "model-x", fake.url)
+        text, calls, tokens = p.chat("SYS", HISTORY, kidwit.TOOLS)
         req = fake.requests[0]
         self.assertEqual(req["path"], "/v1/messages")
         self.assertEqual(req["headers"]["x-api-key"], "sk-test")
@@ -418,17 +419,17 @@ class AnthropicTests(ProviderTestCase):
 
     def test_consecutive_user_messages_merge(self):
         history = HISTORY + [{"role": "user", "text": "try again"}]
-        msgs = agent.AnthropicProvider.convert(history)
+        msgs = kidwit.AnthropicProvider.convert(history)
         self.assertEqual([m["role"] for m in msgs], ["user", "assistant", "user"])
         self.assertEqual([b["type"] for b in msgs[-1]["content"]], ["tool_result", "text"])
-        two_users = agent.AnthropicProvider.convert([{"role": "user", "text": "a"}, {"role": "user", "text": "b"}])
+        two_users = kidwit.AnthropicProvider.convert([{"role": "user", "text": "a"}, {"role": "user", "text": "b"}])
         self.assertEqual(len(two_users), 1)
         self.assertEqual(len(two_users[0]["content"]), 2)
 
     def test_http_error_surfaces(self):
         fake = self.api((400, {"error": {"message": "nope"}}))
-        with self.assertRaises(agent.AgentError):
-            agent.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY, [])
+        with self.assertRaises(kidwit.AgentError):
+            kidwit.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY, [])
 
 
 class OpenAITests(ProviderTestCase):
@@ -439,8 +440,8 @@ class OpenAITests(ProviderTestCase):
         call = {"id": "x1", "type": "function", "function": {"name": "run", "arguments": '{"command": "ls"}'}}
         fake = self.api(self.reply({"content": None, "tool_calls": [call]},
                                    {"prompt_tokens": 4, "completion_tokens": 2}))
-        p = agent.OpenAIProvider("sk-o", "gpt-x", fake.url)
-        text, calls, tokens = p.chat("SYS", HISTORY, agent.TOOLS)
+        p = kidwit.OpenAIProvider("sk-o", "gpt-x", fake.url)
+        text, calls, tokens = p.chat("SYS", HISTORY, kidwit.TOOLS)
         req = fake.requests[0]
         self.assertEqual(req["path"], "/chat/completions")
         self.assertEqual(req["headers"]["authorization"], "Bearer sk-o")
@@ -455,20 +456,20 @@ class OpenAITests(ProviderTestCase):
 
     def test_no_auth_header_without_key(self):
         fake = self.api(self.reply({"content": "hi"}))
-        agent.OpenAIProvider(None, "local", fake.url).chat("s", HISTORY[:1], [])
+        kidwit.OpenAIProvider(None, "local", fake.url).chat("s", HISTORY[:1], [])
         self.assertNotIn("authorization", fake.requests[0]["headers"])
 
     def test_invalid_json_arguments(self):
         call = {"id": "x1", "type": "function", "function": {"name": "run", "arguments": "{broken"}}
         fake = self.api(self.reply({"content": "", "tool_calls": [call]}))
-        _, calls, _ = agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        _, calls, _ = kidwit.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
         self.assertEqual(calls[0]["input"], {"_invalid_json": "{broken"})
-        out, err = agent.Tools(".", None).call("run", calls[0]["input"])
+        out, err = kidwit.Tools(".", None).call("run", calls[0]["input"])
         self.assertTrue(err)
         self.assertIn("not valid JSON", out)
 
     def test_content_null_rules(self):
-        msgs = agent.OpenAIProvider.convert("s", [
+        msgs = kidwit.OpenAIProvider.convert("s", [
             {"role": "assistant", "text": "", "calls": [{"id": "1", "name": "run", "input": {}}]},
             {"role": "assistant", "text": "", "calls": []}])
         self.assertIsNone(msgs[1]["content"])
@@ -476,8 +477,8 @@ class OpenAITests(ProviderTestCase):
 
     def test_unexpected_reply(self):
         fake = self.api((200, {"oops": 1}))
-        with self.assertRaises(agent.AgentError):
-            agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        with self.assertRaises(kidwit.AgentError):
+            kidwit.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
 
 
 class ScriptedProvider:
@@ -511,7 +512,7 @@ class AgentTestCase(ToolTestCase):
     def agent(self, *steps, mode="auto"):
         self.provider = ScriptedProvider(*steps)
         self.tools = self.make(mode)
-        return agent.Agent(self.provider, self.tools, self.ui, "SYSTEM")
+        return kidwit.Agent(self.provider, self.tools, self.ui, "SYSTEM")
 
     def events(self, kind):
         return [d for k, d in self.ui.events if k == kind]
@@ -555,9 +556,9 @@ class AgentLoopTests(AgentTestCase):
         self.assertEqual(self.provider.seen[0][2], ["list_files", "search", "read_file"])
 
     def test_turn_limit(self):
-        bot = self.agent(*[("", [call(str(i), "list_files")], (1, 1)) for i in range(agent.MAX_TURNS)])
+        bot = self.agent(*[("", [call(str(i), "list_files")], (1, 1)) for i in range(kidwit.MAX_TURNS)])
         self.assertIsNone(bot.run("loop forever"))
-        self.assertEqual(len(self.provider.seen), agent.MAX_TURNS)
+        self.assertEqual(len(self.provider.seen), kidwit.MAX_TURNS)
         self.assertIn("turns", self.events("error")[0]["message"])
         assert_valid_history(self, bot.history)
 
@@ -567,7 +568,7 @@ class AgentLoopTests(AgentTestCase):
         self.assertTrue(bot.history[-1]["text"])
 
     def test_api_error_returns_none(self):
-        bot = self.agent(agent.AgentError("HTTP 400: nope"))
+        bot = self.agent(kidwit.AgentError("HTTP 400: nope"))
         self.assertIsNone(bot.run("hi"))
         self.assertEqual(self.events("error"), [{"message": "HTTP 400: nope"}])
 
@@ -576,7 +577,7 @@ class InterruptTests(AgentTestCase):
     def test_interrupt_during_tool_leaves_valid_history(self):
         bot = self.agent(("", [call("1", "list_files"), call("2", "run", command="sleep 5")], (1, 1)))
 
-        class Boom(agent.Tools):
+        class Boom(kidwit.Tools):
             def call(self, name, args):
                 if name == "run":
                     raise KeyboardInterrupt
@@ -590,15 +591,15 @@ class InterruptTests(AgentTestCase):
 
     def test_next_task_after_interrupt_is_valid_for_both_apis(self):
         bot = self.agent(("", [call("1", "list_files")], (1, 1)))
-        bot.tools = type("T", (agent.Tools,), {"call": lambda *a: (_ for _ in ()).throw(KeyboardInterrupt)})(
+        bot.tools = type("T", (kidwit.Tools,), {"call": lambda *a: (_ for _ in ()).throw(KeyboardInterrupt)})(
             self.root, self.ui, "auto")
         bot.run("first")
         bot.history.append({"role": "user", "text": "second"})
         assert_valid_history(self, bot.history)
-        msgs = agent.AnthropicProvider.convert(bot.history)
+        msgs = kidwit.AnthropicProvider.convert(bot.history)
         self.assertEqual([m["role"] for m in msgs], ["user", "assistant", "user"])
         self.assertEqual([b["type"] for b in msgs[-1]["content"]], ["tool_result", "text"])
-        roles = [m["role"] for m in agent.OpenAIProvider.convert("s", bot.history)]
+        roles = [m["role"] for m in kidwit.OpenAIProvider.convert("s", bot.history)]
         self.assertEqual(roles, ["system", "user", "assistant", "tool", "user"])
 
     def test_repair_is_a_no_op_when_nothing_is_pending(self):
@@ -629,11 +630,11 @@ class TrimTests(AgentTestCase):
         bot.history = self.history(8, 100000)
         bot.trim()
         outputs = [r["output"] for m in bot.history if m["role"] == "tool" for r in m["results"]]
-        self.assertEqual(outputs[0], agent.OLD_OUTPUT)
+        self.assertEqual(outputs[0], kidwit.OLD_OUTPUT)
         self.assertEqual(outputs[-1], "x" * 100000)
-        self.assertLessEqual(len(json.dumps(bot.history)), agent.CONTEXT_BUDGET + 1000)
-        self.assertGreater(outputs.count(agent.OLD_OUTPUT), 0)
-        self.assertLess(outputs.count(agent.OLD_OUTPUT), len(outputs))
+        self.assertLessEqual(len(json.dumps(bot.history)), kidwit.CONTEXT_BUDGET + 1000)
+        self.assertGreater(outputs.count(kidwit.OLD_OUTPUT), 0)
+        self.assertLess(outputs.count(kidwit.OLD_OUTPUT), len(outputs))
 
     def test_never_touches_last_two_messages_even_over_budget(self):
         bot = self.agent()
@@ -650,22 +651,22 @@ class TrimTests(AgentTestCase):
 
 class SystemPromptTests(ToolTestCase):
     def test_includes_root_os_and_shell(self):
-        prompt = agent.build_system(self.root)
+        prompt = kidwit.build_system(self.root)
         self.assertIn(str(self.root), prompt)
         self.assertIn("kidwit", prompt)
         self.assertNotIn("Project instructions", prompt)
 
     def test_agents_md_then_claude_md(self):
         self.put("CLAUDE.md", "claude rules")
-        self.assertIn("claude rules", agent.build_system(self.root))
+        self.assertIn("claude rules", kidwit.build_system(self.root))
         self.put("AGENTS.md", "agents rules")
-        prompt = agent.build_system(self.root)
+        prompt = kidwit.build_system(self.root)
         self.assertIn("agents rules", prompt)
         self.assertNotIn("claude rules", prompt)
 
     def test_instructions_are_clipped(self):
         self.put("AGENTS.md", "y" * 50000)
-        self.assertLess(agent.build_system(self.root).count("y"), 20100)
+        self.assertLess(kidwit.build_system(self.root).count("y"), 20100)
 
 
 def args(**kw):
@@ -681,28 +682,28 @@ def env(**values):
 class ProviderSelectionTests(unittest.TestCase):
     def test_anthropic_when_key_is_set(self):
         with env(ANTHROPIC_API_KEY="k", OPENAI_API_KEY="o", AGENT_MODEL="m"):
-            p = agent.make_provider(args())
-        self.assertIsInstance(p, agent.AnthropicProvider)
+            p = kidwit.make_provider(args())
+        self.assertIsInstance(p, kidwit.AnthropicProvider)
         self.assertEqual((p.key, p.model), ("k", "m"))
 
     def test_default_model_for_anthropic(self):
         with env(ANTHROPIC_API_KEY="k"):
-            self.assertEqual(agent.make_provider(args()).model, agent.DEFAULT_MODEL)
+            self.assertEqual(kidwit.make_provider(args()).model, kidwit.DEFAULT_MODEL)
 
     def test_flag_beats_env_beats_key(self):
         with env(ANTHROPIC_API_KEY="k", OPENAI_API_KEY="o", AGENT_PROVIDER="openai", AGENT_MODEL="m"):
-            self.assertIsInstance(agent.make_provider(args()), agent.OpenAIProvider)
-            self.assertIsInstance(agent.make_provider(args(provider="anthropic")), agent.AnthropicProvider)
+            self.assertIsInstance(kidwit.make_provider(args()), kidwit.OpenAIProvider)
+            self.assertIsInstance(kidwit.make_provider(args(provider="anthropic")), kidwit.AnthropicProvider)
 
     def test_openai_compatible_local_server_needs_no_key(self):
         with env(AGENT_BASE_URL="http://localhost:11434/v1", AGENT_MODEL="llama"):
-            p = agent.make_provider(args())
-        self.assertIsInstance(p, agent.OpenAIProvider)
+            p = kidwit.make_provider(args())
+        self.assertIsInstance(p, kidwit.OpenAIProvider)
         self.assertEqual((p.key, p.base), (None, "http://localhost:11434/v1"))
 
     def test_flags_override_env(self):
         with env(OPENAI_API_KEY="o", AGENT_MODEL="env-model", AGENT_BASE_URL="http://env"):
-            p = agent.make_provider(args(model="flag-model", base_url="http://flag/"))
+            p = kidwit.make_provider(args(model="flag-model", base_url="http://flag/"))
         self.assertEqual((p.model, p.base), ("flag-model", "http://flag"))
 
     def test_clear_errors(self):
@@ -711,8 +712,8 @@ class ProviderSelectionTests(unittest.TestCase):
                  ({}, args(provider="anthropic"), "ANTHROPIC_API_KEY"),
                  ({"AGENT_PROVIDER": "gemini"}, args(), "unknown provider")]
         for values, a, message in cases:
-            with self.subTest(message), env(**values), self.assertRaises(agent.AgentError) as cm:
-                agent.make_provider(a)
+            with self.subTest(message), env(**values), self.assertRaises(kidwit.AgentError) as cm:
+                kidwit.make_provider(a)
             self.assertIn(message, str(cm.exception))
 
 
@@ -722,19 +723,19 @@ class CliTests(ToolTestCase):
         patches = [contextlib.redirect_stdout(out), contextlib.redirect_stderr(err),
                    mock.patch("sys.stdin", io.StringIO(stdin)), env()]
         if provider:
-            patches.append(mock.patch.object(agent, "make_provider", lambda a: provider))
+            patches.append(mock.patch.object(kidwit, "make_provider", lambda a: provider))
         with contextlib.ExitStack() as stack:
             for p in patches:
                 stack.enter_context(p)
-            code = agent.main(["--root", str(self.root), *argv])
+            code = kidwit.main(["--root", str(self.root), *argv])
         return code, out.getvalue(), err.getvalue()
 
     def test_version(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
-            agent.main(["--version"])
+            kidwit.main(["--version"])
         self.assertEqual(cm.exception.code, 0)
-        self.assertIn(agent.VERSION, out.getvalue())
+        self.assertIn(kidwit.VERSION, out.getvalue())
 
     def test_missing_config_exits_1_with_message(self):
         code, out, err = self.run_main("do it")
@@ -757,7 +758,7 @@ class CliTests(ToolTestCase):
         self.assertEqual(code, 0)
         self.assertIn("all done", out)
         self.assertEqual(ok.seen[0][1][0]["text"], "fix the bug")
-        bad = ScriptedProvider(agent.AgentError("boom"))
+        bad = ScriptedProvider(kidwit.AgentError("boom"))
         code, _, err = self.run_main("fix", provider=bad)
         self.assertEqual(code, 1)
         self.assertIn("boom", err)
@@ -778,7 +779,7 @@ class CliTests(ToolTestCase):
 
     def test_yes_and_read_only_conflict(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            agent.main(["--yes", "--read-only", "x"])
+            kidwit.main(["--yes", "--read-only", "x"])
 
     def test_repl_clear_and_exit(self):
         p = ScriptedProvider(("one", [], (1, 1)), ("two", [], (1, 1)))
@@ -789,7 +790,7 @@ class CliTests(ToolTestCase):
 
     def test_repl_verbose_toggle(self):
         p = ScriptedProvider(("", [call("1", "run", command="echo hello-from-run")], (1, 1)), ("ok", [], (1, 1)))
-        with mock.patch.object(agent.UI, "ask", side_effect=["/verbose", "go", "/verbose", None]):
+        with mock.patch.object(kidwit.UI, "ask", side_effect=["/verbose", "go", "/verbose", None]):
             code, out, _ = self.run_main("--yes", provider=p)
         self.assertEqual(code, 0)
         self.assertIn("verbose on", out)
@@ -797,14 +798,14 @@ class CliTests(ToolTestCase):
         self.assertIn("verbose off", out)
 
     def test_repl_prompt_is_double_arrow(self):
-        with mock.patch.object(agent.UI, "ask", side_effect=[None]) as ask:
+        with mock.patch.object(kidwit.UI, "ask", side_effect=[None]) as ask:
             self.run_main("--json", provider=ScriptedProvider())
         self.assertEqual(ask.call_args_list[0].args, (">> ", "1;32"))
 
     def test_repl_undo_reverts_and_tells_the_model(self):
         p = ScriptedProvider(("", [call("1", "write_file", path="a.txt", content="hi")], (1, 1)), ("ok", [], (1, 1)),
                              ("next", [], (1, 1)))
-        with mock.patch.object(agent.UI, "ask", side_effect=["make a.txt", "/undo", "what now", None]):
+        with mock.patch.object(kidwit.UI, "ask", side_effect=["make a.txt", "/undo", "what now", None]):
             code, out, _ = self.run_main("--yes", provider=p)
         self.assertEqual(code, 0)
         self.assertFalse((self.root / "a.txt").exists())
@@ -836,7 +837,7 @@ class EndToEndTests(ProviderTestCase):
 
     def cli(self, *argv, stdin="", env_extra=None):
         env = {"PATH": os.environ["PATH"], "HOME": str(self.root), **(env_extra or {})}
-        proc = subprocess.run([sys.executable, str(Path(agent.__file__)), "--root", str(self.root), *argv],
+        proc = subprocess.run([sys.executable, str(Path(kidwit.__file__)), "--root", str(self.root), *argv],
                               input=stdin, capture_output=True, text=True, env=env, timeout=60)
         return proc, [json.loads(line) for line in proc.stdout.splitlines()]
 
@@ -903,7 +904,7 @@ class EndToEndTests(ProviderTestCase):
 
 class BannerTests(unittest.TestCase):
     def banner(self, color):
-        ui = agent.UI()
+        ui = kidwit.UI()
         ui.color = color
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -919,16 +920,16 @@ class BannerTests(unittest.TestCase):
         self.assertEqual(self.banner(False), "")
 
     def test_no_banner_in_json_or_piped_runs(self):
-        self.assertFalse(agent.UI(json_mode=True).color)
+        self.assertFalse(kidwit.UI(json_mode=True).color)
         out = io.StringIO()
         with contextlib.redirect_stdout(out), mock.patch("sys.stdin", io.StringIO("")):
-            agent.main(["--json", "--provider", "openai", "--model", "m", "--base-url", "http://127.0.0.1:1"])
+            kidwit.main(["--json", "--provider", "openai", "--model", "m", "--base-url", "http://127.0.0.1:1"])
         self.assertNotIn("█", out.getvalue())
 
 
 class QuietOutputTests(unittest.TestCase):
     def show(self, verbose, *events):
-        ui, out = agent.UI(verbose=verbose), io.StringIO()
+        ui, out = kidwit.UI(verbose=verbose), io.StringIO()
         with contextlib.redirect_stdout(out):
             for kind, data in events:
                 ui.emit(kind, **data)
@@ -955,7 +956,7 @@ class QuietOutputTests(unittest.TestCase):
         self.assertIn("boom", out)
 
     def test_json_mode_is_unaffected_by_quiet(self):
-        ui, out = agent.UI(json_mode=True), io.StringIO()
+        ui, out = kidwit.UI(json_mode=True), io.StringIO()
         with contextlib.redirect_stdout(out):
             ui.emit(*self.OUTPUT[:1], **self.OUTPUT[1])
         self.assertEqual(json.loads(out.getvalue()), {"type": "output", "line": "noisy test output"})
@@ -1056,7 +1057,7 @@ class GitAwareListingTests(ToolTestCase):
         self.assertIn("SECRET", self.call("read_file", path=".env")[0])
 
     def test_subdirectory_of_a_repo_lists_only_its_own_files(self):
-        self.tools = agent.Tools(self.root / "src", self.ui, "auto")
+        self.tools = kidwit.Tools(self.root / "src", self.ui, "auto")
         self.assertEqual(self.call("list_files")[0], "app.py")
 
     def test_skip_dirs_apply_to_tracked_files_too(self):
@@ -1067,16 +1068,16 @@ class GitAwareListingTests(ToolTestCase):
     def test_non_repo_falls_back_to_directory_walk(self):
         with tempfile.TemporaryDirectory() as plain:
             (Path(plain) / "a.txt").write_text("hi")
-            self.assertEqual(agent.Tools(plain, self.ui, "auto").call("list_files", {}), ("a.txt", False))
+            self.assertEqual(kidwit.Tools(plain, self.ui, "auto").call("list_files", {}), ("a.txt", False))
 
     def test_missing_git_falls_back_to_directory_walk(self):
-        with mock.patch.object(agent.subprocess, "run", side_effect=FileNotFoundError):
+        with mock.patch.object(kidwit.subprocess, "run", side_effect=FileNotFoundError):
             self.assertIn("debug.log", self.call("list_files")[0].split("\n"))
 
 
 class StyleTests(unittest.TestCase):
     def render(self, color, kind, **data):
-        ui, out = agent.UI(), io.StringIO()
+        ui, out = kidwit.UI(), io.StringIO()
         ui.color = color
         with contextlib.redirect_stdout(out):
             ui.emit(kind, **data)
@@ -1101,7 +1102,7 @@ class StyleTests(unittest.TestCase):
         self.assertEqual(self.render(False, "tool", id="1", name="run", input={"command": "ls"}), '- run {"command": "ls"}\n')
 
     def prompt_for(self, color, tty, json_mode=False):
-        ui = agent.UI(json_mode=json_mode)
+        ui = kidwit.UI(json_mode=json_mode)
         ui.color = color
         seen = []
         with mock.patch("builtins.input", lambda p: seen.append(p) or "x"), \
@@ -1121,7 +1122,7 @@ class StyleTests(unittest.TestCase):
         asked = []
         ui = FakeUI(["y"])
         ui.ask = lambda prompt, code="0": asked.append((prompt, code)) or "y"
-        tools = agent.Tools(tempfile.mkdtemp(), ui, "ask", log=False)
+        tools = kidwit.Tools(tempfile.mkdtemp(), ui, "ask", log=False)
         tools.call("run", {"command": "true"})
         self.assertTrue(asked[0][0].startswith("└ allow?"))
         self.assertEqual(asked[0][1], "1;33")
@@ -1282,22 +1283,22 @@ class CutOffReplyTests(ProviderTestCase):
         reply = {"stop_reason": "max_tokens", "content": [
             {"type": "tool_use", "id": "t1", "name": "write_file", "input": {"path": "a.py", "content": "half"}}]}
         fake = self.api((200, reply))
-        _, calls, _ = agent.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], agent.TOOLS)
+        _, calls, _ = kidwit.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], kidwit.TOOLS)
         self.assertEqual(calls[0]["name"], "write_file")
-        out, err = agent.Tools(".", None, "auto").call(calls[0]["name"], calls[0]["input"])
+        out, err = kidwit.Tools(".", None, "auto").call(calls[0]["name"], calls[0]["input"])
         self.assertTrue(err)
         self.assertIn("cut off", out)
 
     def test_openai_cut_off_tool_call_is_not_run(self):
         call = {"id": "x1", "type": "function", "function": {"name": "run", "arguments": '{"command": "rm'}}
         fake = self.api((200, {"choices": [{"finish_reason": "length", "message": {"content": "", "tool_calls": [call]}}]}))
-        _, calls, _ = agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], agent.TOOLS)
+        _, calls, _ = kidwit.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], kidwit.TOOLS)
         self.assertIn("_error", calls[0]["input"])
 
     def test_normal_stop_reasons_are_untouched(self):
         fake = self.api((200, {"stop_reason": "tool_use", "content": [
             {"type": "tool_use", "id": "t1", "name": "run", "input": {"command": "ls"}}]}))
-        _, calls, _ = agent.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], agent.TOOLS)
+        _, calls, _ = kidwit.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], kidwit.TOOLS)
         self.assertEqual(calls[0]["input"], {"command": "ls"})
 
 
@@ -1322,7 +1323,7 @@ class CompactionTests(AgentTestCase):
         before = len(bot.history)
         self.assertEqual(bot.run("continue"), "all done")
         system, summary_request, tools = self.provider.seen[0]
-        self.assertEqual((system, tools), (agent.SUMMARY_SYSTEM, []))
+        self.assertEqual((system, tools), (kidwit.SUMMARY_SYSTEM, []))
         self.assertEqual([m["role"] for m in summary_request], ["user"])
         self.assertIn("original task: fix the parser", summary_request[0]["text"])
         self.assertIn("CALL read_file", summary_request[0]["text"])
@@ -1346,7 +1347,7 @@ class CompactionTests(AgentTestCase):
                 self.assertFalse(a["role"] == b["role"] == "assistant")
 
     def test_summary_failure_keeps_the_history_and_the_task_continues(self):
-        bot = self.agent(agent.AgentError("summary API down"), ("carried on", [], (1, 1)))
+        bot = self.agent(kidwit.AgentError("summary API down"), ("carried on", [], (1, 1)))
         bot.history = self.big_history()
         before = len(bot.history)
         self.assertEqual(bot.run("go"), "carried on")
@@ -1368,7 +1369,7 @@ class CompactionTests(AgentTestCase):
         self.assertEqual(self.provider.seen, [])
 
     def test_transcript_cuts_long_output_and_marks_errors(self):
-        text = agent.transcript([
+        text = kidwit.transcript([
             {"role": "user", "text": "task"},
             {"role": "assistant", "text": "thinking", "calls": [call("1", "run", command="x" * 500)]},
             {"role": "tool", "results": [{"id": "1", "output": "y" * 5000, "is_error": True}]}])
@@ -1387,8 +1388,8 @@ class NoEmptyToolsTests(ProviderTestCase):
     def test_requests_without_tools_omit_the_field(self):
         fake = self.api((200, {"content": [{"type": "text", "text": "ok"}]}),
                         (200, {"choices": [{"message": {"content": "ok"}}]}))
-        agent.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
-        agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        kidwit.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        kidwit.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
         self.assertTrue(all("tools" not in r["body"] for r in fake.requests))
 
 

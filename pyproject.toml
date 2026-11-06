@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kidwit"
+dynamic = ["version"]
+description = "A minimal coding agent in one file of standard-library Python. It works inside one directory and asks before it changes anything."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "SM Sabbir Amin" }]
+keywords = ["coding-agent", "ai-agent", "llm", "cli", "anthropic", "openai", "deepseek", "ollama"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://kidwit.sabbiramin.dev"
+Source = "https://github.com/sabbiramin113008/kidwit"
+Issues = "https://github.com/sabbiramin113008/kidwit/issues"
+Changelog = "https://github.com/sabbiramin113008/kidwit/blob/main/CHANGELOG.md"
+
+[project.scripts]
+kidwit = "kidwit:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["kidwit"]
+
+[tool.setuptools.dynamic]
+version = { attr = "kidwit.VERSION" }

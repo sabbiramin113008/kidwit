@@ -6,11 +6,18 @@ kidwit reads your code, edits files, runs commands and reports back, using nativ
 
 ## Install
 
-You need Python 3.9 or newer. There is nothing else to install. Download `agent.py`, for example with `curl -O <raw URL of agent.py>`, and run it:
+You need Python 3.9 or newer. kidwit has no dependencies. From a clone of this repository:
 
 ```
+pipx install .            # or: pip install .
 export ANTHROPIC_API_KEY=sk-ant-...
-python3 agent.py "fix the failing test"
+kidwit "fix the failing test"
+```
+
+The whole engine is one file, so you can also run it with no install at all:
+
+```
+python3 src/kidwit.py "fix the failing test"
 ```
 
 Without a task, kidwit starts an interactive session and, on a color terminal, shows a small banner. The banner never appears with `--json`, with a task on the command line, or when output is piped. `/clear` resets the conversation, `/verbose` toggles detailed output, and `/exit` (or `/quit`, or end of input) leaves.
@@ -32,7 +39,7 @@ Provider choice follows this order: `--provider`, then `AGENT_PROVIDER`, then An
 Local model example:
 
 ```
-AGENT_BASE_URL=http://localhost:11434/v1 AGENT_MODEL=qwen2.5-coder python3 agent.py "add a docstring to main()"
+AGENT_BASE_URL=http://localhost:11434/v1 AGENT_MODEL=qwen2.5-coder kidwit "add a docstring to main()"
 ```
 
 Flags:
@@ -104,10 +111,11 @@ With `--json`, kidwit writes one JSON object per line on stdout. Tasks and appro
 The tests use only `unittest` and need no API key. A fake local HTTP server stands in for both APIs.
 
 ```
-scripts/check.sh
+scripts/check.sh                              # everything below in one go
+python3 -m unittest discover -s tests -t .    # just the tests
 ```
 
-This checks the Python version, compiles `agent.py`, confirms it imports only the standard library, runs the tests, and checks the size (`grep -vcE '^\s*(#.*)?$' agent.py`). Over 500 lines prints a warning, and over 700 fails.
+`scripts/check.sh` checks the Python version, compiles `src/kidwit.py`, confirms it imports only the standard library, runs the tests, and checks the size (`grep -vcE '^\s*(#.*)?$' src/kidwit.py`). Over 500 lines prints a warning, and over 700 fails.
 
 ## Evals
 
