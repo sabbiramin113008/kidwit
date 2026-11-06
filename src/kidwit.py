@@ -510,12 +510,20 @@ class UI:
         if self.json:
             line = sys.stdin.readline()
             return line.rstrip("\n") if line else None
-        if self.color and sys.stdin.isatty():  # \001..\002 tell readline the escape codes take no width
-            prompt = f"\001\033[{code}m\002{prompt}\001\033[0m\002"
+        tinted = self.color and sys.stdin.isatty()
+        if tinted:  # the color covers the prompt and what you type; it is reset below, so readline sees no escape in the middle
+            rl = sys.modules.get("readline")  # loaded by main() in a terminal; \001..\002 tell it the escape takes no width
+            if rl:
+                prompt = "\001\033[%sm%s%s" % (code, "\001" if "libedit" in (rl.__doc__ or "") else "\002", prompt)
+            else:
+                prompt = f"\033[{code}m{prompt}"
         try:
             return input(prompt)
         except EOFError:
             return None
+        finally:
+            if tinted:
+                sys.stdout.write("\033[0m")
 
 
 def transcript(messages):
@@ -656,6 +664,11 @@ def main(argv=None):
     except AgentError as e:
         ui.emit("error", message=str(e))
         return 1
+    if sys.stdin.isatty() and sys.stdout.isatty() and not args.json:
+        try:
+            import readline  # noqa: F401  arrow keys and history for input(). Loaded only here: it can print escape codes
+        except ImportError:  # Windows has no readline module
+            pass
     tools = Tools(root, ui, "auto" if args.yes else "read-only" if args.read_only else "ask", not args.no_log)
     bot = Agent(provider, tools, ui, build_system(root))
     if args.task:

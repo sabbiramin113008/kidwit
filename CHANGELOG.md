@@ -6,6 +6,9 @@ All notable changes to kidwit are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The interactive prompt now supports arrow-key editing and history (Up and Down) on macOS and Linux. The green `>>` prompt keeps its color: what you type is green too, and kidwit resets the color when you press Enter. Windows is unchanged.
+
 ## [0.1.0] - 2026-11-07
 
 The first stable release. It is the same code as 0.1.0rc2, with the checks widened to every supported Python version.

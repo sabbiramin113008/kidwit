@@ -1123,8 +1123,19 @@ class StyleTests(unittest.TestCase):
             ui.ask(">> ", "1;32")
         return seen
 
-    def test_prompt_is_colored_with_readline_markers_on_a_terminal(self):
-        self.assertEqual(self.prompt_for(True, True), ["\001\033[1;32m\002>> \001\033[0m\002"])
+    def test_prompt_is_colored_on_a_terminal_and_the_color_is_reset_after_input(self):
+        with mock.patch.dict(sys.modules, {"readline": None}), mock.patch("sys.stdout", io.StringIO()) as out:
+            self.assertEqual(self.prompt_for(True, True), ["\033[1;32m>> "])  # no readline: no markers
+        self.assertEqual(out.getvalue(), "\033[0m")
+
+    def test_prompt_markers_follow_the_readline_flavour(self):
+        gnu = mock.Mock(__doc__="Importing this module enables command line editing using GNU readline.")
+        edit = mock.Mock(__doc__="Importing this module enables command line editing using libedit readline.")
+        with mock.patch("sys.stdout", io.StringIO()):
+            with mock.patch.dict(sys.modules, {"readline": gnu}):
+                self.assertEqual(self.prompt_for(True, True), ["\001\033[1;32m\002>> "])
+            with mock.patch.dict(sys.modules, {"readline": edit}):  # libedit opens and closes the invisible part with \001
+                self.assertEqual(self.prompt_for(True, True), ["\001\033[1;32m\001>> "])
 
     def test_prompt_is_plain_when_piped_or_without_color(self):
         self.assertEqual(self.prompt_for(True, False), [">> "])
@@ -1472,6 +1483,74 @@ class InstallScriptTests(unittest.TestCase):
         env = {**SYSTEM_ENV, "PATH": os.environ["PATH"], "HOME": str(self.home), "KIDWIT_METHOD": "file"}
         subprocess.run(["sh"], input=cut, capture_output=True, text=True, env=env, timeout=30)
         self.assertFalse((self.home / ".local").exists())
+
+
+@unittest.skipIf(os.name == "nt", "needs a Unix pseudo-terminal")
+class InteractivePromptTests(unittest.TestCase):
+    def session(self, keys):
+        """Run kidwit in a pseudo-terminal, send keys once the prompt shows, return (output, exit status or None)."""
+        import pty
+        import select
+        import signal
+        env = {**os.environ, "AGENT_PROVIDER": "openai", "AGENT_MODEL": "m", "OPENAI_API_KEY": "x",
+               "AGENT_BASE_URL": "http://127.0.0.1:9", "TERM": "xterm-256color"}
+        env.pop("NO_COLOR", None)
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.environ.update(env)
+            os.execv(sys.executable, [sys.executable, str(Path(kidwit.__file__))])
+        shown = []
+
+        def drain(seconds):
+            end = time.time() + seconds
+            while time.time() < end:
+                if select.select([fd], [], [], 0.1)[0]:
+                    try:
+                        data = os.read(fd, 4096)
+                    except OSError:
+                        return
+                    if not data:
+                        return
+                    shown.append(data)
+
+        status = None
+        try:
+            for _ in range(100):  # wait for the prompt
+                drain(0.1)
+                if b">>" in b"".join(shown):
+                    break
+            for key in keys:
+                os.write(fd, key)
+                time.sleep(0.1)
+            for _ in range(40):  # up to 4 seconds for the process to end
+                done, st = os.waitpid(pid, os.WNOHANG)
+                if done:
+                    status = st
+                    break
+                drain(0.1)
+        finally:
+            if status is None:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            os.close(fd)
+        return b"".join(shown), status
+
+    def test_prompt_is_green_without_stray_marker_bytes(self):
+        out, _ = self.session([b"\x04"])  # Ctrl-D ends the session
+        self.assertIn(b"\x1b[1;32m>> ", out)
+        self.assertNotIn(b"\x01", out)
+        self.assertNotIn(b"\x02", out)
+
+    def test_arrow_keys_edit_the_line(self):
+        # "/eit", Left, Left, "x" makes "/exit" only if the arrow keys moved the cursor, so the session must end
+        _, status = self.session([b"/eit", b"\x1b[D", b"\x1b[D", b"x", b"\r"])
+        self.assertIsNotNone(status, "the Left arrow did not edit the line")
+        self.assertEqual(os.WEXITSTATUS(status), 0)
+
+    def test_importing_kidwit_does_not_load_readline(self):
+        code = "import sys; sys.path.insert(0, %r); import kidwit; print('readline' in sys.modules)" % str(Path(kidwit.__file__).parent)
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertEqual(proc.stdout.strip(), "False")
 
 
 if __name__ == "__main__":
