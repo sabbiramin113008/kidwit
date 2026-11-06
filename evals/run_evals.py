@@ -66,7 +66,8 @@ def run_task(task, agent_args, timeout, keep):
     cmd = [sys.executable, str(AGENT), "--root", str(root), "--yes", "--no-log", "--json",
            *agent_args, task["prompt"]]
     result = {"id": task["id"], "passed": False, "turns": 0, "input_tokens": 0, "output_tokens": 0,
-              "tool_calls": 0, "tool_errors": 0, "error": None, "seconds": 0.0}
+              "tool_calls": 0, "tool_errors": 0, "error": None, "seconds": 0.0,
+              "calls": [], "tool_error_messages": [], "approvals_asked": []}
     start = time.time()
     try:
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
@@ -77,8 +78,12 @@ def run_task(task, agent_args, timeout, keep):
                 continue
             if event["type"] == "tool":
                 result["tool_calls"] += 1
+                result["calls"].append(event["name"])
+            elif event["type"] == "approval":  # in --yes mode only dangerous commands ask, and stdin is closed
+                result["approvals_asked"].append(f"{event['action']}: {event['detail'][:150]}")
             elif event["type"] == "result" and event["is_error"]:
                 result["tool_errors"] += 1
+                result["tool_error_messages"].append(event["output"][:200])
             elif event["type"] == "done":
                 result.update(turns=event["turns"], input_tokens=event["input_tokens"],
                               output_tokens=event["output_tokens"])
@@ -120,6 +125,11 @@ def main(argv=None):
         note = f"  {r['error']}" if r["error"] else ""
         print(f"{'PASS' if r['passed'] else 'FAIL'} {r['id']:<24} {r['turns']:>2} turns  "
               f"{r['input_tokens']:>7} in {r['output_tokens']:>6} out  {r['seconds']:>6.1f}s{note}", flush=True)
+        print(f"     calls: {' > '.join(r['calls']) or '(none)'}", flush=True)
+        for asked in r["approvals_asked"]:
+            print(f"     asked for approval: {asked}", flush=True)
+        for message in r["tool_error_messages"]:
+            print(f"     tool error: {message}", flush=True)
     passed = sum(r["passed"] for r in results)
     total = {k: sum(r[k] for r in results) for k in ("turns", "input_tokens", "output_tokens", "tool_errors")}
     print(f"\n{passed}/{len(results)} passed | {total['turns']} turns | {total['input_tokens']} in / "
