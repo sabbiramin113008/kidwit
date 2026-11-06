@@ -1301,5 +1301,96 @@ class CutOffReplyTests(ProviderTestCase):
         self.assertEqual(calls[0]["input"], {"command": "ls"})
 
 
+class CompactionTests(AgentTestCase):
+    def big_history(self, pairs=12, text_size=30000):
+        h = [{"role": "user", "text": "original task: fix the parser"}]
+        for i in range(pairs):
+            h.append({"role": "assistant", "text": "t" * text_size, "calls": [call(str(i), "read_file", path=f"f{i}.py")]})
+            h.append({"role": "tool", "results": [{"id": str(i), "output": "out" * 200, "is_error": i == 3}]})
+        return h
+
+    def test_under_budget_makes_no_summary_call(self):
+        bot = self.agent(("done", [], (1, 1)))
+        bot.history = self.big_history(pairs=2, text_size=100)
+        bot.run("go")
+        self.assertEqual(len(self.provider.seen), 1)
+        self.assertEqual(self.provider.seen[0][0], "SYSTEM")
+
+    def test_over_budget_replaces_the_older_half_with_a_summary(self):
+        bot = self.agent(("SUMMARY: fixing the parser; read f0..f5", [], (1, 1)), ("all done", [], (1, 1)))
+        bot.history = self.big_history()
+        before = len(bot.history)
+        self.assertEqual(bot.run("continue"), "all done")
+        system, summary_request, tools = self.provider.seen[0]
+        self.assertEqual((system, tools), (agent.SUMMARY_SYSTEM, []))
+        self.assertEqual([m["role"] for m in summary_request], ["user"])
+        self.assertIn("original task: fix the parser", summary_request[0]["text"])
+        self.assertIn("CALL read_file", summary_request[0]["text"])
+        self.assertIn("RESULT (error)", summary_request[0]["text"])
+        main_call = self.provider.seen[1][1]
+        self.assertTrue(main_call[0]["text"].startswith("Summary of the earlier work"))
+        self.assertIn("fixing the parser", main_call[0]["text"])
+        self.assertLess(len(main_call), before)
+        self.assertEqual(main_call[-1], {"role": "user", "text": "continue"})
+        self.assertIn("summarized", self.ui.events[0][1]["message"])
+
+    def test_cut_never_separates_a_tool_call_from_its_result(self):
+        for pairs in range(3, 16):
+            bot = self.agent(("S", [], (1, 1)))
+            bot.history = self.big_history(pairs=pairs, text_size=40000)
+            bot.compact()
+            assert_valid_history(self, bot.history)
+            self.assertEqual(bot.history[0]["role"], "user")
+            self.assertEqual(bot.history[1]["role"], "assistant")
+            for a, b in zip(bot.history, bot.history[1:]):
+                self.assertFalse(a["role"] == b["role"] == "assistant")
+
+    def test_summary_failure_keeps_the_history_and_the_task_continues(self):
+        bot = self.agent(agent.AgentError("summary API down"), ("carried on", [], (1, 1)))
+        bot.history = self.big_history()
+        before = len(bot.history)
+        self.assertEqual(bot.run("go"), "carried on")
+        self.assertEqual(len(bot.history), before + 2)  # no message dropped: the task and the final answer were added
+        self.assertEqual(bot.history[0]["text"], "original task: fix the parser")
+
+    def test_empty_summary_is_ignored(self):
+        bot = self.agent(("   ", [], (1, 1)))
+        bot.history = self.big_history()
+        before = len(bot.history)
+        bot.compact()
+        self.assertEqual(len(bot.history), before)
+
+    def test_tiny_histories_are_left_alone(self):
+        bot = self.agent()
+        bot.history = [{"role": "user", "text": "x" * 500000}]
+        bot.compact()
+        self.assertEqual(len(bot.history), 1)
+        self.assertEqual(self.provider.seen, [])
+
+    def test_transcript_cuts_long_output_and_marks_errors(self):
+        text = agent.transcript([
+            {"role": "user", "text": "task"},
+            {"role": "assistant", "text": "thinking", "calls": [call("1", "run", command="x" * 500)]},
+            {"role": "tool", "results": [{"id": "1", "output": "y" * 5000, "is_error": True}]}])
+        self.assertIn("USER: task", text)
+        self.assertIn("CALL run", text)
+        self.assertIn("RESULT (error)", text)
+        self.assertLess(len(text), 1000)
+
+    def test_trim_reports_the_size(self):
+        bot = self.agent()
+        bot.history = self.big_history(pairs=2, text_size=100)
+        self.assertEqual(bot.trim(), len(json.dumps(bot.history)))
+
+
+class NoEmptyToolsTests(ProviderTestCase):
+    def test_requests_without_tools_omit_the_field(self):
+        fake = self.api((200, {"content": [{"type": "text", "text": "ok"}]}),
+                        (200, {"choices": [{"message": {"content": "ok"}}]}))
+        agent.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        self.assertTrue(all("tools" not in r["body"] for r in fake.requests))
+
+
 if __name__ == "__main__":
     unittest.main()

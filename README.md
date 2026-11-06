@@ -80,6 +80,8 @@ Every write, edit and command is appended to `<root>/.agent/audit.jsonl`. kidwit
 
 The path jail covers the file tools only. `read_file`, `write_file` and `edit_file` refuse paths outside the project root, including `../` and symlinks that lead out, and `list_files` and `search` skip such symlinks. `run` executes real shell commands, and those can reach anything your user account can reach. The protections in v1 are the approval prompt and `--read-only`. There is no OS-level sandbox, so review each command before you approve it, and avoid `--yes` on a machine or directory you care about.
 
+Long sessions are kept within the model's context in two steps. First, old tool output is dropped. If the history is still too large (over about 200,000 characters), kidwit asks the model to summarize the older half of the conversation and continues from that summary.
+
 Other deliberate omissions: no streaming of model responses (command output does stream), no sub-agents, no MCP, no saved sessions, and no UI beyond plain terminal text.
 
 ## Event protocol

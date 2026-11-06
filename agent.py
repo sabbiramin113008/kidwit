@@ -22,7 +22,7 @@ VERSION = "0.1.0"
 MAX_TURNS = 50
 MAX_TOKENS = 8192
 MAX_TOOL_OUTPUT = 12000
-CONTEXT_BUDGET = 400000
+CONTEXT_BUDGET = 200000
 DEFAULT_TIMEOUT = 120
 DEFAULT_MODEL = "claude-sonnet-5-5"
 BACKOFF = 2
@@ -30,6 +30,10 @@ RETRY_CODES = {408, 429, 500, 502, 503, 504, 529}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
              ".agent", ".next", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache"}
 OLD_OUTPUT = "[old output removed to save context]"
+SUMMARY_SYSTEM = ("You summarize a coding agent's earlier work so it can continue after the old messages are dropped. "
+                  "Write compact plain text: the user's task and later instructions, files read or changed and why, "
+                  "commands run and their results, decisions made, and what is still left to do. Keep exact file "
+                  "paths, names and error messages. No preamble.")
 # Commands that run without asking in ask mode: read-only inspection and test runners. Deliberately
 # no cat/grep/head: the path jail covers the file tools, not `run`, so those could read outside the root.
 CUT_OFF = {"_error": "your reply hit the output token limit and this call was cut off, so it did not run; "
@@ -152,8 +156,10 @@ class AnthropicProvider(Provider):
         msgs = self.convert(history)
         if msgs:
             msgs[-1]["content"][-1]["cache_control"] = cache
-        body = {"model": self.model, "max_tokens": MAX_TOKENS, "messages": msgs, "tools": tools,
+        body = {"model": self.model, "max_tokens": MAX_TOKENS, "messages": msgs,
                 "system": [{"type": "text", "text": system, "cache_control": cache}]}
+        if tools:
+            body["tools"] = tools
         headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
         reply = post_json(f"{self.base}/v1/messages", headers, body)
         blocks = reply.get("content") or []
@@ -191,9 +197,10 @@ class OpenAIProvider(Provider):
         return msgs
 
     def chat(self, system, history, tools):
-        body = {"model": self.model, "messages": self.convert(system, history), "tools": [
-            {"type": "function", "function": {"name": t["name"], "description": t["description"],
-                                              "parameters": t["input_schema"]}} for t in tools]}
+        body = {"model": self.model, "messages": self.convert(system, history)}
+        if tools:
+            body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                                               "parameters": t["input_schema"]}} for t in tools]
         headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
         reply = post_json(f"{self.base}/chat/completions", headers, body)
         try:
@@ -507,6 +514,20 @@ class UI:
             return None
 
 
+def transcript(messages):
+    """Plain-text rendering of history, with long text and outputs cut, for the summarizer."""
+    lines = []
+    for m in messages:
+        if m["role"] == "user":
+            lines.append("USER: " + m["text"][:4000])
+        elif m["role"] == "assistant":
+            calls = "".join(f"\n  CALL {c['name']} {json.dumps(c['input'])[:200]}" for c in m.get("calls", []))
+            lines.append("ASSISTANT: " + m["text"][:1500] + calls)
+        else:
+            lines += [f"  RESULT{' (error)' if r['is_error'] else ''}: {r['output'][:300]}" for r in m["results"]]
+    return "\n".join(lines)[:60000]
+
+
 class Agent:
     def __init__(self, provider, tools, ui, system):
         self.provider, self.tools, self.ui, self.system = provider, tools, ui, system
@@ -518,7 +539,8 @@ class Agent:
         tokens_in = tokens_out = 0
         try:
             for turn in range(1, MAX_TURNS + 1):
-                self.trim()
+                if self.trim() > CONTEXT_BUDGET:
+                    self.compact()
                 text, calls, (n_in, n_out) = self.provider.chat(
                     self.system, self.history, self.tools.available())
                 tokens_in, tokens_out = tokens_in + n_in, tokens_out + n_out
@@ -551,15 +573,30 @@ class Agent:
                 for c in last["calls"]]})
 
     def trim(self):
-        """Drop old tool output when the history outgrows CONTEXT_BUDGET. Last two messages stay."""
+        """Drop old tool output when the history outgrows CONTEXT_BUDGET. Last two messages stay. Returns the size."""
         size = len(json.dumps(self.history))
         for m in self.history[:-2]:
             for r in m.get("results", []):
                 if size <= CONTEXT_BUDGET:
-                    return
+                    return size
                 if len(r["output"]) > 200:
                     size -= len(r["output"]) - len(OLD_OUTPUT)
                     r["output"] = OLD_OUTPUT
+        return size
+
+    def compact(self):
+        """Still over budget after trim(): replace the older half of the history with a model-written summary."""
+        cut = next((i for i in range(max(1, len(self.history) // 2), len(self.history) - 2)
+                    if self.history[i]["role"] == "assistant"), None)
+        if cut is None:
+            return
+        try:
+            summary = self.provider.chat(SUMMARY_SYSTEM, [{"role": "user", "text": transcript(self.history[:cut])}], [])[0]
+        except AgentError:
+            return  # keep going with the trimmed history
+        if summary.strip():
+            self.history[:cut] = [{"role": "user", "text": "Summary of the earlier work in this session:\n" + summary}]
+            self.ui.emit("info", message="summarized the earlier conversation to save context")
 
 
 def build_system(root):
