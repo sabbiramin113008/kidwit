@@ -26,7 +26,7 @@ class FakeUI:
     def emit(self, kind, **data):
         self.events.append((kind, data))
 
-    def ask(self, prompt):
+    def ask(self, prompt, code="0"):
         return self.answers.pop(0) if self.answers else None
 
     def kinds(self):
@@ -783,6 +783,11 @@ class CliTests(ToolTestCase):
         self.assertIn("hello-from-run", out)
         self.assertIn("verbose off", out)
 
+    def test_repl_prompt_is_double_arrow(self):
+        with mock.patch.object(agent.UI, "ask", side_effect=[None]) as ask:
+            self.run_main("--json", provider=ScriptedProvider())
+        self.assertEqual(ask.call_args_list[0].args, (">> ", "1;32"))
+
     def test_repl_quits_on_eof(self):
         code, _, _ = self.run_main("--json", provider=ScriptedProvider(), stdin="")
         self.assertEqual(code, 0)
@@ -1042,6 +1047,59 @@ class GitAwareListingTests(ToolTestCase):
     def test_missing_git_falls_back_to_directory_walk(self):
         with mock.patch.object(agent.subprocess, "run", side_effect=FileNotFoundError):
             self.assertIn("debug.log", self.call("list_files")[0].split("\n"))
+
+
+class StyleTests(unittest.TestCase):
+    def render(self, color, kind, **data):
+        ui, out = agent.UI(), io.StringIO()
+        ui.color = color
+        with contextlib.redirect_stdout(out):
+            ui.emit(kind, **data)
+        return out.getvalue()
+
+    def test_model_text_has_a_gutter_only_in_color(self):
+        colored = self.render(True, "text", text="line one\nline two")
+        self.assertEqual(colored.count("▌"), 2)
+        self.assertIn("\033[35m", colored)
+        self.assertEqual(self.render(False, "text", text="line one\nline two"), "\nline one\nline two\n")
+
+    def test_permission_request_is_distinct(self):
+        out = self.render(True, "approval", action="edit", target="a.py", detail="--- a\n+++ b\n-x\n+y\n")
+        self.assertIn("permission needed: edit a.py", out)
+        self.assertIn("\033[1;33m", out)
+        self.assertIn("\033[32m+y", out)
+        self.assertIn("\033[31m-x", out)
+
+    def test_tool_name_is_highlighted(self):
+        out = self.render(True, "tool", id="1", name="run", input={"command": "ls"})
+        self.assertIn("\033[36mrun", out)
+        self.assertEqual(self.render(False, "tool", id="1", name="run", input={"command": "ls"}), '- run {"command": "ls"}\n')
+
+    def prompt_for(self, color, tty, json_mode=False):
+        ui = agent.UI(json_mode=json_mode)
+        ui.color = color
+        seen = []
+        with mock.patch("builtins.input", lambda p: seen.append(p) or "x"), \
+                mock.patch("sys.stdin", mock.Mock(isatty=lambda: tty, readline=lambda: "x\n")):
+            ui.ask(">> ", "1;32")
+        return seen
+
+    def test_prompt_is_colored_with_readline_markers_on_a_terminal(self):
+        self.assertEqual(self.prompt_for(True, True), ["\001\033[1;32m\002>> \001\033[0m\002"])
+
+    def test_prompt_is_plain_when_piped_or_without_color(self):
+        self.assertEqual(self.prompt_for(True, False), [">> "])
+        self.assertEqual(self.prompt_for(False, True), [">> "])
+        self.assertEqual(self.prompt_for(True, True, json_mode=True), [])
+
+    def test_repl_and_permission_prompts(self):
+        asked = []
+        ui = FakeUI(["y"])
+        ui.ask = lambda prompt, code="0": asked.append((prompt, code)) or "y"
+        tools = agent.Tools(tempfile.mkdtemp(), ui, "ask", log=False)
+        tools.call("run", {"command": "true"})
+        self.assertTrue(asked[0][0].startswith("└ allow?"))
+        self.assertEqual(asked[0][1], "1;33")
 
 
 if __name__ == "__main__":

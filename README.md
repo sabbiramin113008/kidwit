@@ -51,6 +51,10 @@ Flags:
 
 A task given on the command line runs once. The exit code is 0 on success and 1 on error, so it works in scripts and benchmarks.
 
+## Reading the terminal
+
+On a color terminal each kind of text looks different. Your prompt is a bold green `>>`. The model's replies have a magenta `▌` gutter. Tool calls are one dim line with the tool name in cyan. Permission requests start with a yellow `┌ permission needed` line, followed by the diff or command and a yellow `└ allow?` prompt. Errors are red. With `NO_COLOR`, piped output or `--json`, none of this styling is printed.
+
 ## Tools
 
 The model gets six tools: `list_files`, `search`, `read_file`, `write_file`, `edit_file` and `run`. Inside a git repository, `list_files` and `search` honour `.gitignore`, so build output and similar files stay out of the way. Edits are exact-string replacement: a match that differs only in trailing whitespace is accepted, and when nothing matches the error names the closest line so the model can correct itself. `old_text` must match exactly once unless `replace_all` is set, and files with Windows line endings keep them.

@@ -335,7 +335,7 @@ class Tools:
         if self.mode == "auto":
             return
         self.ui.emit("approval", action=action, target=target, detail=detail)
-        answer = (self.ui.ask("Allow? [y]es / [a]lways / [n]o / or type feedback: ") or "").strip()
+        answer = (self.ui.ask("└ allow? [y]es / [a]lways / [n]o / or type feedback › ", "1;33") or "").strip()
         low = answer.lower()
         if low in ("a", "always"):
             self.mode = "auto"
@@ -443,15 +443,17 @@ class UI:
         if self.json:
             print(json.dumps({"type": kind, **d}), flush=True)
         elif kind == "text":
-            print("\n" + d["text"])
+            print("\n" + "\n".join(self.paint("35", "▌ ") + line for line in d["text"].splitlines())
+                  if self.color else "\n" + d["text"])
         elif kind == "info":
             print(self.paint("2", d["message"]))
         elif kind == "tool":
-            print(self.paint("2", f"- {d['name']} {json.dumps(d['input'])[:120 if self.verbose else 60]}"))
+            args = json.dumps(d["input"])[:120 if self.verbose else 60]
+            print(self.paint("2", "- ") + self.paint("36", d["name"]) + self.paint("2", " " + args))
         elif kind == "output" and self.verbose:
             print(self.paint("2", "  " + d["line"]), flush=True)
         elif kind == "approval":
-            print(self.paint("33", f"? {d['action']} {d['target']}"))
+            print(self.paint("1;33", f"┌ permission needed: {d['action']} {d['target']}"))
             print("  " + d["detail"] if d["action"] == "run" else self.paint_diff(d["detail"]))
         elif kind == "result" and d["is_error"]:
             print(self.paint("31", "x " + d["output"].split("\n")[0][:200]))
@@ -460,11 +462,13 @@ class UI:
         elif kind == "error":
             print(self.paint("31", "error: " + d["message"]), file=sys.stderr)
 
-    def ask(self, prompt):
+    def ask(self, prompt, code="0"):
         """Read one line from the user. Returns None on EOF."""
         if self.json:
             line = sys.stdin.readline()
             return line.rstrip("\n") if line else None
+        if self.color and sys.stdin.isatty():  # \001..\002 tell readline the escape codes take no width
+            prompt = f"\001\033[{code}m\002{prompt}\001\033[0m\002"
         try:
             return input(prompt)
         except EOFError:
@@ -587,7 +591,7 @@ def main(argv=None):
     ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /verbose toggles detail, /exit quits.")
     while True:
         try:
-            line = ui.ask("> ")
+            line = ui.ask(">> ", "1;32")
         except KeyboardInterrupt:
             return 0
         if line is None or line.strip() in ("/exit", "/quit"):
