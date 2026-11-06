@@ -27,7 +27,15 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Run the tests
-        run: python -m unittest discover -s tests -t . -q
+        shell: bash
+        run: python -m unittest discover -s tests -t . 2>&1 | tee test-output.txt; exit ${PIPESTATUS[0]}
+      - name: Show test failures as annotations
+        if: failure()
+        shell: python
+        run: |
+          import urllib.parse
+          text = open("test-output.txt", encoding="utf-8", errors="replace").read()[-30000:]
+          print("::error title=test output::" + text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
       - name: Check the eval tasks themselves
         run: python evals/run_evals.py --selftest
 
