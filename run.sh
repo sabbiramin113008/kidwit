@@ -6,6 +6,8 @@
 #   ./run.sh -i --demo             interactive session in a fresh throwaway demo repo
 #   ./run.sh "your task"           run one task in the current directory
 #   ./run.sh --root DIR "task"     any kidwit flags are passed straight through
+#   ./run.sh --evals [--task ID]   score kidwit on the eval tasks (runs the agent with --yes; see README)
+#   ./run.sh --evals --selftest    check the eval tasks themselves, no model needed
 #
 # Inside an interactive session: /clear resets the conversation, /exit (or Ctrl-D) quits.
 # Approval mode is the default: you answer y / a / n for every write, edit and command.
@@ -97,6 +99,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -i|--interactive) INTERACTIVE=1; shift ;;
     --demo) DEMO=1; shift ;;
+    --evals) shift; exec python3 "$HERE/evals/run_evals.py" "$@" ;;
     *) break ;;
   esac
 done
