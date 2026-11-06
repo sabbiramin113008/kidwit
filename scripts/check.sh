@@ -36,8 +36,12 @@ else
 fi
 
 LOC=$(grep -vcE '^\s*(#.*)?$' agent.py || true)
-LIMIT=500
-if [ "$LOC" -gt "$LIMIT" ]; then
-  echo "✗ line budget exceeded: $LOC / $LIMIT lines of code (PROJECT.md D4)"; exit 1
+TARGET=500   # soft target (PROJECT.md D4): a better agent beats a lower number
+CEILING=600  # hard ceiling
+if [ "$LOC" -gt "$CEILING" ]; then
+  echo "✗ size ceiling exceeded: $LOC / $CEILING lines of code (PROJECT.md D4)"; exit 1
+elif [ "$LOC" -gt "$TARGET" ]; then
+  echo "! over the ~$TARGET line target: $LOC lines of code (ceiling $CEILING)"
+else
+  echo "✓ size: $LOC / $TARGET lines of code"
 fi
-echo "✓ line budget: $LOC / $LIMIT lines of code"

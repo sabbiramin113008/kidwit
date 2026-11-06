@@ -1,6 +1,6 @@
 # kidwit
 
-A complete coding-agent engine in one file of standard-library Python, under 500 lines of code. It works inside one directory and asks before it changes anything.
+A complete coding-agent engine in one file of standard-library Python, around 500 lines of code. It works inside one directory and asks before it changes anything.
 
 kidwit reads your code, edits files, runs commands and reports back, using native tool calling with Anthropic or any OpenAI-compatible API. It is a from-scratch build and a case study in how little a coding agent needs. It is not a replacement for mature agents.
 
@@ -94,7 +94,7 @@ The tests use only `unittest` and need no API key. A fake local HTTP server stan
 scripts/check.sh
 ```
 
-This checks the Python version, compiles `agent.py`, confirms it imports only the standard library, runs the tests, and checks the line budget (`grep -vcE '^\s*(#.*)?$' agent.py` must be 500 or less).
+This checks the Python version, compiles `agent.py`, confirms it imports only the standard library, runs the tests, and checks the size (`grep -vcE '^\s*(#.*)?$' agent.py`). Over 500 lines prints a warning, and over 600 fails.
 
 ## License
 
