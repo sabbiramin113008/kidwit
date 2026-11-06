@@ -28,7 +28,8 @@ kidwit is early software. This is what has and has not been tested:
 
 1. **Tested live:** the OpenAI-compatible adapter with DeepSeek (`deepseek-chat`) on macOS with Python 3.14. The 8 tasks in `evals/` all pass end to end.
 2. **Not yet run against the real service:** the Anthropic adapter. It is covered by the offline tests, but nobody has run it against the live Anthropic API yet.
-3. **Untested:** Windows. The command runner uses Python's default shell there (`cmd.exe`), and killing a timed-out command's child processes is only verified on macOS and Linux-style systems. Linux and Python 3.9 to 3.13 are also untested for now.
+3. **Tests pass in CI on Linux, macOS and Windows,** with Python 3.14. CI runs the offline tests and the eval self-test, not a live model. Nobody has run kidwit against a live model on Linux or Windows yet. On Windows the `run` tool uses `cmd.exe`, so commands the model writes in Unix shell syntax may fail there.
+4. **Untested:** Python 3.9 to 3.13 in CI. The code is written for 3.9 and newer, and 3.10 to 3.13 passed once on Linux and macOS, but they are not part of the regular checks yet.
 
 If you try it somewhere on this list, please open an issue with what happened.
 
