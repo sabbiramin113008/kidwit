@@ -13,7 +13,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 python3 agent.py "fix the failing test"
 ```
 
-Without a task, kidwit starts an interactive session and, on a color terminal, shows a small banner. The banner never appears with `--json`, with a task on the command line, or when output is piped. `/clear` resets the conversation and `/exit` (or `/quit`, or end of input) leaves.
+Without a task, kidwit starts an interactive session and, on a color terminal, shows a small banner. The banner never appears with `--json`, with a task on the command line, or when output is piped. `/clear` resets the conversation, `/verbose` toggles detailed output, and `/exit` (or `/quit`, or end of input) leaves.
 
 ## Configuration
 
@@ -53,7 +53,7 @@ A task given on the command line runs once. The exit code is 0 on success and 1 
 
 ## Tools
 
-The model gets six tools: `list_files`, `search`, `read_file`, `write_file`, `edit_file` and `run`. Edits are exact-string replacement. `old_text` must match exactly once unless `replace_all` is set, and files with Windows line endings keep them.
+The model gets six tools: `list_files`, `search`, `read_file`, `write_file`, `edit_file` and `run`. Inside a git repository, `list_files` and `search` honour `.gitignore`, so build output and similar files stay out of the way. Edits are exact-string replacement: a match that differs only in trailing whitespace is accepted, and when nothing matches the error names the closest line so the model can correct itself. `old_text` must match exactly once unless `replace_all` is set, and files with Windows line endings keep them.
 
 If the project root has an `AGENTS.md` (or else a `CLAUDE.md`), its first 20,000 characters are added to the system prompt.
 
