@@ -13,7 +13,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 python3 agent.py "fix the failing test"
 ```
 
-Without a task, kidwit starts an interactive session. `/clear` resets the conversation and `/exit` (or `/quit`, or end of input) leaves.
+Without a task, kidwit starts an interactive session and, on a color terminal, shows a small banner. The banner never appears with `--json`, with a task on the command line, or when output is piped. `/clear` resets the conversation and `/exit` (or `/quit`, or end of input) leaves.
 
 ## Configuration
 

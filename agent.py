@@ -2,7 +2,6 @@
 """kidwit: a minimal coding-agent engine. Standard library only.
 
 Usage: python3 agent.py "fix the failing test"   (no task: REPL; --json: JSON-lines events)
-Env: ANTHROPIC_API_KEY, OPENAI_API_KEY, AGENT_PROVIDER, AGENT_MODEL, AGENT_BASE_URL
 """
 import argparse
 import difflib
@@ -31,14 +30,14 @@ RETRY_CODES = {408, 429, 500, 502, 503, 504, 529}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
              ".agent", ".next", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache"}
 OLD_OUTPUT = "[old output removed to save context]"
+BANNER = "  █▄▀ █ █▀▄ █ █ █ █ ▀█▀\n  █ █ █ █▄▀ ▀▄▀▄▀ █  █ "
 
 SYSTEM = """You are kidwit, a coding agent working inside one project directory.
-Project root: {root}
-OS: {os}   Shell: {shell}
+Project root: {root}   OS: {os}   Shell: {shell}
 
 Explore with list_files and search, and read_file before you change anything.
 Prefer edit_file for small changes, copying old_text exactly. Verify your work by running the tests.
-Paths are relative to the project root. The user may deny an action and give feedback; adapt.
+Paths are relative to the project root. If the user denies an action, adapt to their feedback.
 Be concise. When done, say what you changed and the result."""
 
 
@@ -262,11 +261,9 @@ class Tools:
             for name in sorted(files):
                 p = Path(dirpath) / name
                 rel = self.rel(p)
-                if rx and not rx.match(rel if "/" in pattern else name):
-                    continue
-                if p.is_symlink() and self.root not in p.resolve().parents:
-                    continue
-                yield p, rel
+                outside = p.is_symlink() and self.root not in p.resolve().parents
+                if not outside and (rx is None or rx.match(rel if "/" in pattern else name)):
+                    yield p, rel
 
     def load(self, p):
         data = p.read_bytes()
@@ -335,8 +332,7 @@ class Tools:
 
     def save(self, p, text):
         p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("w", encoding="utf-8", newline="") as f:
-            f.write(text)
+        p.write_bytes(text.encode("utf-8"))  # bytes keep line endings exactly
 
     def t_write_file(self, path, content):
         p = self.path(path)
@@ -407,6 +403,10 @@ class UI:
     def paint_diff(self, text):
         codes = {"+": "32", "-": "31", "@": "36"}
         return "\n".join(self.paint(codes.get(line[:1], "0"), line) for line in text.splitlines())
+
+    def banner(self):
+        if self.color:
+            print("\n".join(self.paint(f"1;38;5;{c}", row) for c, row in zip((205, 141), BANNER.split("\n"))))
 
     def emit(self, kind, **d):
         if self.json:
@@ -551,6 +551,7 @@ def main(argv=None):
     bot = Agent(provider, tools, ui, build_system(root))
     if args.task:
         return 0 if bot.run(" ".join(args.task)) is not None else 1
+    ui.banner()
     ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /exit quits.")
     while True:
         try:

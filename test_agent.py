@@ -861,5 +861,30 @@ class EndToEndTests(ProviderTestCase):
         self.assertIn("bad request", events[-1]["message"])
 
 
+class BannerTests(unittest.TestCase):
+    def banner(self, color):
+        ui = agent.UI()
+        ui.color = color
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ui.banner()
+        return out.getvalue()
+
+    def test_banner_on_color_terminal(self):
+        out = self.banner(True)
+        self.assertIn("█", out)
+        self.assertIn("\033[", out)
+
+    def test_no_banner_without_color(self):
+        self.assertEqual(self.banner(False), "")
+
+    def test_no_banner_in_json_or_piped_runs(self):
+        self.assertFalse(agent.UI(json_mode=True).color)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch("sys.stdin", io.StringIO("")):
+            agent.main(["--json", "--provider", "openai", "--model", "m", "--base-url", "http://127.0.0.1:1"])
+        self.assertNotIn("█", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
