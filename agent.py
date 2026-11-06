@@ -401,7 +401,8 @@ class Tools:
         self.audit("run", command)
         proc = subprocess.Popen(command, shell=True, cwd=self.root, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
-                                errors="replace", start_new_session=os.name == "posix")
+                                errors="replace", start_new_session=os.name == "posix",
+                                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})  # no stale .pyc after fast edits
         expired = []
         timer = threading.Timer(timeout, lambda: (expired.append(True), kill_tree(proc)))
         timer.start()

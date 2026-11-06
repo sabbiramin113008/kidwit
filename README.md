@@ -100,6 +100,18 @@ scripts/check.sh
 
 This checks the Python version, compiles `agent.py`, confirms it imports only the standard library, runs the tests, and checks the size (`grep -vcE '^\s*(#.*)?$' agent.py`). Over 500 lines prints a warning, and over 700 fails.
 
+## Evals
+
+`evals/` holds 8 small tasks, each a tiny repo with a failing check: an off-by-one, a name error, implementing a function, a root cause in a second file, a rename across files, a CRLF file, a missing config default, and a new CLI flag. They show whether a change to kidwit makes it better or worse.
+
+```
+python3 evals/run_evals.py --selftest     # checks the tasks themselves, no model needed
+python3 evals/run_evals.py                # runs every task against your configured model
+python3 evals/run_evals.py --task crlf-file -- --provider openai --model deepseek-chat
+```
+
+The runner prints pass or fail, turns, tokens and time per task, and saves the results to `evals/results/`. Be aware that it runs the agent with `--yes`, so the model's commands run as you with no sandbox. Dangerous commands still need approval, and because the runner closes stdin they are denied. Run it only where that is acceptable.
+
 ## License
 
 MIT.

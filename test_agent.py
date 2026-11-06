@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import agent
+from evals import run_evals
+from evals.tasks import TASKS
 
 
 class FakeUI:
@@ -207,6 +209,13 @@ class RunTests(ToolTestCase):
         self.assertIn("hi", out)
         self.assertIn("oops", out)
         self.assertIn(("output", {"line": "hi"}), self.ui.events)
+
+    def test_python_does_not_write_stale_bytecode(self):
+        self.put("m.py", "print('v1')\n")
+        self.call("run", command="python3 m.py")
+        self.put("m.py", "print('v2')\n")  # same size, same second: a stale .pyc would print v1
+        self.assertIn("v2", self.call("run", command="python3 m.py")[0])
+        self.assertFalse((self.root / "__pycache__").exists())
 
     def test_runs_in_root_without_stdin(self):
         self.put("marker.txt")
@@ -1100,6 +1109,59 @@ class StyleTests(unittest.TestCase):
         tools.call("run", {"command": "true"})
         self.assertTrue(asked[0][0].startswith("└ allow?"))
         self.assertEqual(asked[0][1], "1;33")
+
+
+class EvalSuiteTests(ProviderTestCase):
+    def test_every_task_fails_as_shipped_and_passes_with_its_solution(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run_evals.selftest(TASKS), 0)
+
+    def test_task_ids_are_unique_and_complete(self):
+        ids = [t["id"] for t in TASKS]
+        self.assertEqual(len(ids), len(set(ids)))
+        for task in TASKS:
+            self.assertTrue({"id", "prompt", "files", "verify", "solution"} <= task.keys(), task["id"])
+
+    def run_eval(self, fake, *extra):
+        out = Path(tempfile.mkdtemp()) / "results.json"
+        argv = ["--task", "off-by-one", "--out", str(out), *extra, "--",
+                "--provider", "openai", "--model", "m", "--base-url", fake.url]
+        with contextlib.redirect_stdout(io.StringIO()) as printed, mock.patch.dict(os.environ, {"PATH": os.environ["PATH"]}, clear=True):
+            code = run_evals.main(argv)
+        return code, json.loads(out.read_text()), printed.getvalue()
+
+    def reply(self, message, usage=(10, 2)):
+        return (200, {"choices": [{"message": message}], "usage": {"prompt_tokens": usage[0], "completion_tokens": usage[1]}})
+
+    def test_runner_scores_a_passing_run(self):
+        edit = {"id": "c1", "type": "function", "function": {"name": "edit_file", "arguments": json.dumps(
+            {"path": "calc.py", "old_text": "a - b", "new_text": "a + b"})}}
+        fake = self.api(self.reply({"content": None, "tool_calls": [edit]}), self.reply({"content": "Fixed."}, (20, 3)))
+        code, saved, printed = self.run_eval(fake)
+        self.assertEqual(code, 0)
+        result = saved["results"][0]
+        self.assertTrue(result["passed"], result)
+        self.assertEqual((result["turns"], result["tool_calls"], result["tool_errors"]), (2, 1, 0))
+        self.assertEqual((result["input_tokens"], result["output_tokens"]), (30, 5))
+        self.assertEqual((saved["passed"], saved["total"]), (1, 1))
+        self.assertIn("PASS off-by-one", printed)
+
+    def test_runner_scores_a_failing_run(self):
+        fake = self.api(self.reply({"content": "I looked and changed nothing."}))
+        code, saved, printed = self.run_eval(fake)
+        self.assertEqual(code, 1)
+        self.assertFalse(saved["results"][0]["passed"])
+        self.assertIn("FAIL off-by-one", printed)
+
+    def test_runner_records_agent_errors(self):
+        fake = self.api((400, {"error": "bad key"}))
+        code, saved, _ = self.run_eval(fake)
+        self.assertEqual(code, 1)
+        self.assertIn("bad key", saved["results"][0]["error"])
+
+    def test_unknown_task_is_rejected(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(run_evals.main(["--task", "nope"]), 2)
 
 
 if __name__ == "__main__":
