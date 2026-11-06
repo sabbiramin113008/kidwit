@@ -18,7 +18,7 @@ kidwit is published to PyPI as `kidwit`, and as a single file (`kidwit.py`) atta
 
 ## The workflows
 
-1. `ci.yml` runs on every push and pull request. It runs the tests on Python 3.9 to 3.13, on Linux, macOS and Windows, and checks that `src/kidwit.py` imports only the standard library and stays within the size ceiling.
+1. `ci.yml` runs on every push and pull request. It runs the tests on Python 3.14, on Linux, macOS and Windows (more Python versions will be added after the first PyPI release), and checks that `src/kidwit.py` imports only the standard library and stays within the size ceiling.
 2. `release.yml` runs when a tag starting with `v` is pushed. It does these steps in order:
    1. Checks that the tag matches `VERSION`.
    2. Builds the sdist and the wheel, and runs `twine check`.
