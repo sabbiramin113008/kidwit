@@ -110,6 +110,11 @@ def glob_re(pat):
     return re.compile(out + r"\Z")
 
 
+def diff(old, new, name):
+    return "".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True),
+                                        f"a/{name}", f"b/{name}"))
+
+
 class Tools:
     def __init__(self, root, ui, mode="ask", log=True):
         self.root, self.ui, self.mode, self.log = Path(root).resolve(), ui, mode, log
@@ -234,3 +239,42 @@ class Tools:
                 f.write(json.dumps({**entry, **extra}) + "\n")
         except Exception:
             pass
+
+    def save(self, p, text):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", encoding="utf-8", newline="") as f:
+            f.write(text)
+
+    def t_write_file(self, path, content):
+        p = self.path(path)
+        if p.is_dir():
+            raise ToolError(f"path is a directory: {path}")
+        rel = self.rel(p)
+        old = self.load(p) if p.exists() else None
+        if old == content:
+            return f"{rel} already has this content"
+        detail = diff(old, content, rel) if old is not None else content[:2000]
+        self.confirm("write", rel, detail)
+        self.audit("write", rel)
+        self.save(p, content)
+        return f"wrote {len(content)} chars to {rel}"
+
+    def t_edit_file(self, path, old_text, new_text, replace_all=False):
+        p = self.path(path)
+        rel, text = self.rel(p), self.load(p)
+        if not old_text:
+            raise ToolError("old_text must not be empty")
+        if old_text not in text and "\r\n" in text:
+            old_text = old_text.replace("\r\n", "\n").replace("\n", "\r\n")
+            new_text = new_text.replace("\r\n", "\n").replace("\n", "\r\n")
+        count = text.count(old_text)
+        if count == 0:
+            raise ToolError(f"old_text not found in {rel}; re-read the file and copy it exactly")
+        if count > 1 and not replace_all:
+            raise ToolError(f"old_text matches {count} places in {rel}; add surrounding "
+                            "context to make it unique, or set replace_all")
+        new = text.replace(old_text, new_text, -1 if replace_all else 1)
+        self.confirm("edit", rel, diff(text, new, rel))
+        self.audit("edit", rel)
+        self.save(p, new)
+        return f"edited {rel} ({count if replace_all else 1} replacement(s))"
