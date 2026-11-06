@@ -6,9 +6,9 @@ cd "$(dirname "$0")/.."
 
 PY="${PYTHON:-python3}"
 SRC=src/kidwit.py
-command -v "$PY" >/dev/null || { echo "✗ $PY not found. Install Python 3.9+."; exit 1; }
-"$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
-  || { echo "✗ Python 3.9+ required, found $("$PY" --version 2>&1)"; exit 1; }
+command -v "$PY" >/dev/null || { echo "✗ $PY not found. Install Python 3.10+."; exit 1; }
+"$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
+  || { echo "✗ Python 3.10+ required, found $("$PY" --version 2>&1)"; exit 1; }
 echo "✓ $("$PY" --version)"
 
 [ -f "$SRC" ] || { echo "✗ $SRC not found"; exit 1; }
@@ -18,8 +18,6 @@ echo "✓ $SRC compiles"
 # Only standard-library imports allowed.
 bad=$("$PY" - <<'PYEOF'
 import ast, sys
-if not hasattr(sys, "stdlib_module_names"):  # Python 3.9 lacks it; check on 3.10+
-    sys.exit(0)
 tree = ast.parse(open("src/kidwit.py").read())
 names = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
 names |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}

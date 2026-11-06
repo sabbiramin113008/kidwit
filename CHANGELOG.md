@@ -6,6 +6,13 @@ All notable changes to kidwit are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0rc2] - 2026-11-07
+
+The second release candidate.
+
+### Changed
+- Python 3.10 or newer is required (was 3.9). Only 3.10 to 3.14 have been run.
+
 ### Added
 - `scripts/install.sh`, a one-line installer: `curl -fsSL https://kidwit.sabbiramin.dev/install | sh`. It uses pipx or uv, or downloads `kidwit.py` and checks its SHA-256 checksum, or installs from PyPI into a private virtual environment.
 
@@ -13,9 +20,9 @@ All notable changes to kidwit are recorded here. The format follows
 - Windows: a command that timed out left its child processes running. kidwit now ends the whole process tree.
 - The eval task `rename-everywhere` no longer needs a Unix shell to check its result.
 
-## [0.1.0] - not yet released
+## [0.1.0rc1] - 2026-11-06
 
-First release.
+First release candidate.
 
 ### Known limitations
 - Tested live only with the OpenAI-compatible adapter (DeepSeek) on macOS with Python 3.14.

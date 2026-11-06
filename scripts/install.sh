@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://kidwit.sabbiramin.dev/install | sh
 #
-# It needs Python 3.9 or newer. It never uses sudo and never writes outside your home directory.
+# It needs Python 3.10 or newer. It never uses sudo and never writes outside your home directory.
 #   1. If pipx or uv is installed, it installs the kidwit package from PyPI with it.
 #   2. Otherwise it downloads the single file kidwit.py from the GitHub Release, checks its
 #      SHA-256 checksum, and puts a small launcher at ~/.local/bin/kidwit.
@@ -39,15 +39,15 @@ main() {
 
     [ "$(id -u)" != 0 ] || die "do not run this as root. It installs into your home directory."
 
-    # Python 3.9 or newer.
+    # Python 3.10 or newer.
     python=""
     for candidate in python3 python; do
-        if have "$candidate" && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
+        if have "$candidate" && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
             python="$candidate"
             break
         fi
     done
-    [ -n "$python" ] || die "Python 3.9 or newer is required, and was not found. Install Python, then run this again."
+    [ -n "$python" ] || die "Python 3.10 or newer is required, and was not found. Install Python, then run this again."
 
     if [ "$method" = auto ]; then
         if have pipx; then method=pipx

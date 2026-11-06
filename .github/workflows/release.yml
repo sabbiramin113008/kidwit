@@ -52,7 +52,7 @@ jobs:
   testpypi:
     name: publish candidate to TestPyPI
     needs: build
-    if: contains(github.ref_name, 'rc') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b')
+    if: ${{ vars.TRUSTED_PUBLISHING == 'true' && (contains(github.ref_name, 'rc') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b')) }}
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -69,7 +69,7 @@ jobs:
   pypi:
     name: publish to PyPI
     needs: build
-    if: ${{ !(contains(github.ref_name, 'rc') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b')) }}
+    if: ${{ vars.TRUSTED_PUBLISHING == 'true' && !(contains(github.ref_name, 'rc') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b')) }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -84,7 +84,7 @@ jobs:
   github-release:
     name: GitHub Release
     needs: [build, testpypi, pypi]
-    if: ${{ always() && needs.build.result == 'success' && (needs.testpypi.result == 'success' || needs.pypi.result == 'success') }}
+    if: ${{ always() && needs.build.result == 'success' && needs.testpypi.result != 'failure' && needs.pypi.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

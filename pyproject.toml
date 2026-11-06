@@ -7,7 +7,7 @@ name = "kidwit"
 dynamic = ["version"]
 description = "A minimal coding agent in one file of standard-library Python. It works inside one directory and asks before it changes anything."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "SM Sabbir Amin", email = "sabbiramin.cse11ruet@gmail.com" }]
@@ -18,11 +18,11 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]

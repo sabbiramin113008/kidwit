@@ -8,7 +8,7 @@ kidwit is a small, deliberate project. A good change makes the agent better with
 2. **One file.** The engine stays in `src/kidwit.py`.
 3. **Size.** The target is about 500 lines of code and the ceiling is 700 (`scripts/check.sh` counts them). It is a soft target: a better agent matters more than hitting the number. A change that adds lines should say why they are worth it.
 4. **Tests.** Every change comes with a test in `tests/test_kidwit.py`. The tests use only `unittest` and need no API key.
-5. **Python 3.9 or newer.** No syntax or library features from later versions.
+5. **Python 3.10 or newer.** No syntax or library features from later versions.
 
 ## Before you open a pull request
 

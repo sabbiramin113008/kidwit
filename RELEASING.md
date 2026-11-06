@@ -23,6 +23,7 @@ kidwit is published to PyPI as `kidwit`, and as a single file (`kidwit.py`) atta
    1. Checks that the tag matches `VERSION`.
    2. Builds the sdist and the wheel, and runs `twine check`.
    3. For a release candidate tag, publishes to TestPyPI. For a final tag, publishes to PyPI after your approval.
+   Publishing to PyPI from the workflow only runs when the repository variable `TRUSTED_PUBLISHING` is `true` (Settings > Secrets and variables > Actions > Variables), because it needs the trusted publishers from "One-time setup". Until then the workflow only builds, checks and creates the GitHub Release, and the upload to PyPI is done by hand with `twine upload dist/*` after `twine check`.
    4. Creates the GitHub Release with `kidwit.py`, the wheel, the sdist and a `SHA256SUMS` file attached.
 
 ## Releasing a version
@@ -66,7 +67,7 @@ kidwit is published to PyPI as `kidwit`, and as a single file (`kidwit.py`) atta
 
 Because kidwit asks for approval on stdin, it cannot be run as `curl ... | python3 -`: the pipe would use up the standard input. These are the supported one-liners instead:
 
-1. Install: `curl -fsSL https://kidwit.sabbiramin.dev/install | sh`. The script (kept in this repository as `scripts/install.sh`) checks for Python 3.9 or newer and installs with `pipx` or `uv` when they exist. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks the SHA-256 checksum from `SHA256SUMS`, and puts a launcher in `~/.local/bin`. If the release has no files yet, it installs the PyPI package into a private virtual environment. It never uses `sudo`, and it installs the latest release unless `KIDWIT_VERSION` is set. `scripts/install.sh` is tested offline in `tests/test_kidwit.py`; after changing it, run `scripts/check.sh`.
+1. Install: `curl -fsSL https://kidwit.sabbiramin.dev/install | sh`. The script (kept in this repository as `scripts/install.sh`) checks for Python 3.10 or newer and installs with `pipx` or `uv` when they exist. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks the SHA-256 checksum from `SHA256SUMS`, and puts a launcher in `~/.local/bin`. If the release has no files yet, it installs the PyPI package into a private virtual environment. It never uses `sudo`, and it installs the latest release unless `KIDWIT_VERSION` is set. `scripts/install.sh` is tested offline in `tests/test_kidwit.py`; after changing it, run `scripts/check.sh`.
 2. Try without installing (bash or zsh): `python3 <(curl -fsSL https://kidwit.sabbiramin.dev/kidwit.py) "fix the failing test"`.
 3. After the first PyPI release: `uvx kidwit "fix the failing test"` or `pipx run kidwit`.
 
