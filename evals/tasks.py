@@ -70,7 +70,8 @@ TASKS = [
                                "class T(unittest.TestCase):\n    def test_all(self):\n"
                                "        self.assertEqual((one.first(), two.second(), load('a')), (1, 2, 1))\n"),
         },
-        "verify": f"{UNITTEST} test_rename && ! grep -rw fetch --include=*.py utils.py one.py two.py",
+        "verify": (f"{UNITTEST} test_rename && python3 -c \"import re, sys; "
+                   "sys.exit(any(re.search(r'\\bfetch\\b', open(f).read()) for f in ('utils.py', 'one.py', 'two.py')))\""),
         "solution": {
             "utils.py": "def load(key):\n    return {'a': 1, 'b': 2}[key]\n",
             "one.py": "from utils import load\n\n\ndef first():\n    return load('a')\n",
