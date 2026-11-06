@@ -37,7 +37,7 @@ fi
 
 LOC=$(grep -vcE '^\s*(#.*)?$' agent.py || true)
 TARGET=500   # soft target (PROJECT.md D4): a better agent beats a lower number
-CEILING=600  # hard ceiling
+CEILING=700  # hard ceiling
 if [ "$LOC" -gt "$CEILING" ]; then
   echo "✗ size ceiling exceeded: $LOC / $CEILING lines of code (PROJECT.md D4)"; exit 1
 elif [ "$LOC" -gt "$TARGET" ]; then

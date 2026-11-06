@@ -98,7 +98,7 @@ The tests use only `unittest` and need no API key. A fake local HTTP server stan
 scripts/check.sh
 ```
 
-This checks the Python version, compiles `agent.py`, confirms it imports only the standard library, runs the tests, and checks the size (`grep -vcE '^\s*(#.*)?$' agent.py`). Over 500 lines prints a warning, and over 600 fails.
+This checks the Python version, compiles `agent.py`, confirms it imports only the standard library, runs the tests, and checks the size (`grep -vcE '^\s*(#.*)?$' agent.py`). Over 500 lines prints a warning, and over 700 fails.
 
 ## License
 
