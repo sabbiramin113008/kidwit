@@ -63,9 +63,16 @@ If the project root has an `AGENTS.md` (or else a `CLAUDE.md`), its first 20,000
 
 ## Approval modes
 
-1. `ask` (default). Before every `write_file`, `edit_file` and `run`, kidwit shows the diff or command and waits for `y`, `a` (always, which switches to auto for the rest of the session), `n`, or any other text. Other text is sent to the model as the reason for the denial.
-2. `auto` (`--yes`). No prompts.
+1. `ask` (default). Before every `write_file`, `edit_file` and `run`, kidwit shows the diff or command and waits for `y`, `a`, `n`, or any other text. Other text is sent to the model as the reason for the denial. `a` (always) approves that kind of action for the rest of the session: file changes, or commands, but not both.
+2. `auto` (`--yes`). No prompts, except for dangerous commands.
 3. `read-only` (`--read-only`). The write tools are not offered to the model, and are refused if called anyway.
+
+Some things are handled for you in every mode:
+
+1. In `ask` mode, harmless commands run without a prompt: `ls`, `pwd`, `git status`, `git diff`, `git log`, `git show`, `git branch`, and test runners such as `python3 -m unittest`, `pytest`, `npm test`, `go test` and `cargo test`. They must use plain relative arguments with no shell operators. `cat`, `grep` and `head` are not on the list on purpose: the path jail does not cover `run`, so they could read files outside the project.
+2. Dangerous commands always ask, even with `--yes` or after `a`: `rm -rf`, `sudo`, `curl ... | sh`, `git reset --hard`, `git clean`, `git push`, `chmod -R` and similar. With no one to answer (for example `--json` with closed stdin) they are denied.
+3. `/undo` in an interactive session reverts the last file write or edit. It does not undo commands.
+4. If the model's reply is cut off at the token limit, the half-written tool call is not run. The model is told to do less per call.
 
 Every write, edit and command is appended to `<root>/.agent/audit.jsonl`. kidwit creates `.agent/.gitignore` so the log stays out of git.
 

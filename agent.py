@@ -30,6 +30,15 @@ RETRY_CODES = {408, 429, 500, 502, 503, 504, 529}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
              ".agent", ".next", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache"}
 OLD_OUTPUT = "[old output removed to save context]"
+# Commands that run without asking in ask mode: read-only inspection and test runners. Deliberately
+# no cat/grep/head: the path jail covers the file tools, not `run`, so those could read outside the root.
+CUT_OFF = {"_error": "your reply hit the output token limit and this call was cut off, so it did not run; "
+                     "do less per call, for example edit_file instead of rewriting a whole file"}
+SAFE_CMD = re.compile(r"(ls|pwd|git (status|diff|log|show|branch)|python3? -m (unittest|pytest)|pytest"
+                      r"|npm test|go test|cargo test)( [\w:./-]+)*")
+# Commands that always ask, even with --yes or after "always".
+DANGER = re.compile(r"\brm\s+-\w*[rf]|\bsudo\b|\bmkfs|\bdd\s+if=|\bch(mod|own)\s+-\w*R|\|\s*(ba|z)?sh\b"
+                    r"|>\s*/dev/|\bgit\s+(reset\s+--hard|clean|push)\b")
 BANNER = "  █▄▀ █ █▀▄ █ █ █ █ ▀█▀\n  █ █ █ █▄▀ ▀▄▀▄▀ █  █ "
 
 SYSTEM = """You are kidwit, a coding agent working inside one project directory.
@@ -151,6 +160,8 @@ class AnthropicProvider(Provider):
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         calls = [{"id": b["id"], "name": b["name"], "input": b.get("input") or {}}
                  for b in blocks if b.get("type") == "tool_use"]
+        if reply.get("stop_reason") == "max_tokens":
+            calls = [{**c, "input": CUT_OFF} for c in calls]
         u = reply.get("usage") or {}
         tokens_in = sum(u.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens",
                                               "cache_creation_input_tokens"))
@@ -186,7 +197,8 @@ class OpenAIProvider(Provider):
         headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
         reply = post_json(f"{self.base}/chat/completions", headers, body)
         try:
-            msg = reply["choices"][0]["message"]
+            choice = reply["choices"][0]
+            msg = choice["message"]
         except (KeyError, IndexError, TypeError):
             raise AgentError(f"unexpected API reply: {str(reply)[:500]}")
         calls = []
@@ -198,6 +210,8 @@ class OpenAIProvider(Provider):
                 args = None
             calls.append({"id": c["id"], "name": c["function"]["name"],
                           "input": args if isinstance(args, dict) else {"_invalid_json": raw}})
+        if choice.get("finish_reason") == "length":
+            calls = [{**c, "input": CUT_OFF} for c in calls]
         u = reply.get("usage") or {}
         return msg.get("content") or "", calls, (u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
 
@@ -232,6 +246,7 @@ def diff(old, new, name):
 class Tools:
     def __init__(self, root, ui, mode="ask", log=True):
         self.root, self.ui, self.mode, self.log = Path(root).resolve(), ui, mode, log
+        self.always, self.undo = set(), []  # kinds approved with "always"; (path, old bytes) per change
 
     def available(self):
         return [t for t in TOOLS if self.mode != "read-only" or t["name"] not in WRITE_TOOLS]
@@ -248,6 +263,8 @@ class Tools:
                 raise TypeError("arguments must be an object")
             if "_invalid_json" in args:
                 raise ToolError("bad arguments: not valid JSON: " + str(args["_invalid_json"])[:200])
+            if "_error" in args:
+                raise ToolError(args["_error"])
             return clip(fn(**args)), False
         except ToolError as e:
             return clip(str(e)), True
@@ -330,15 +347,18 @@ class Tools:
             out += f"\n[{left} more lines; use offset={offset + len(chunk)}]"
         return out or "(empty file, or offset is past the end)"
 
-    def confirm(self, action, target, detail):
-        """Ask before a write, edit or command. Raises ToolError if denied."""
-        if self.mode == "auto":
+    def confirm(self, action, target, detail, force=False):
+        """Ask before a write, edit or command. Raises ToolError if denied. force asks even in auto mode."""
+        kind = "run" if action == "run" else "files"  # "always" covers file changes or commands, not both
+        if not force and (self.mode == "auto" or kind in self.always):
             return
         self.ui.emit("approval", action=action, target=target, detail=detail)
-        answer = (self.ui.ask("└ allow? [y]es / [a]lways / [n]o / or type feedback › ", "1;33") or "").strip()
+        prompt = "└ DANGEROUS, allow?" if force else "└ allow?"
+        answer = (self.ui.ask(f"{prompt} [y]es / [a]lways / [n]o / or type feedback › ", "1;33") or "").strip()
         low = answer.lower()
         if low in ("a", "always"):
-            self.mode = "auto"
+            if not force:
+                self.always.add(kind)
         elif low not in ("y", "yes"):
             raise ToolError("denied by user" + (f": {answer}" if low not in ("", "n", "no") else ""))
 
@@ -357,8 +377,17 @@ class Tools:
             pass
 
     def save(self, p, text):
+        self.undo.append((p, p.read_bytes() if p.exists() else None))
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(text.encode("utf-8"))  # bytes keep line endings exactly
+
+    def revert(self):
+        """Undo the most recent write or edit. Commands cannot be undone."""
+        if not self.undo:
+            return "nothing to undo"
+        p, old = self.undo.pop()
+        p.unlink() if old is None else p.write_bytes(old)
+        return f"reverted {self.rel(p)}"
 
     def t_write_file(self, path, content):
         p = self.path(path)
@@ -397,7 +426,9 @@ class Tools:
 
     def t_run(self, command, timeout=DEFAULT_TIMEOUT):
         timeout = float(timeout)
-        self.confirm("run", command, command)
+        danger = bool(DANGER.search(command))
+        if danger or not (SAFE_CMD.fullmatch(command) and ".." not in command and " /" not in command):
+            self.confirm("run", command, command, force=danger)
         self.audit("run", command)
         proc = subprocess.Popen(command, shell=True, cwd=self.root, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
@@ -589,7 +620,7 @@ def main(argv=None):
     if args.task:
         return 0 if bot.run(" ".join(args.task)) is not None else 1
     ui.banner()
-    ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /verbose toggles detail, /exit quits.")
+    ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /undo reverts the last edit, /verbose toggles detail, /exit quits.")
     while True:
         try:
             line = ui.ask(">> ", "1;32")
@@ -600,6 +631,10 @@ def main(argv=None):
         if line.strip() == "/clear":
             bot.history.clear()
             ui.emit("info", message="history cleared")
+        elif line.strip() == "/undo":
+            note = tools.revert()
+            bot.history.append({"role": "user", "text": f"[the user ran /undo: {note}]"})
+            ui.emit("info", message=note)
         elif line.strip() == "/verbose":
             ui.verbose = not ui.verbose
             ui.emit("info", message="verbose " + ("on" if ui.verbose else "off"))
