@@ -6,6 +6,9 @@ All notable changes to kidwit are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `scripts/install.sh`, a one-line installer: `curl -fsSL https://kidwit.sabbiramin.dev/install | sh`. It uses pipx or uv, or downloads `kidwit.py` and checks its SHA-256 checksum, or installs from PyPI into a private virtual environment.
+
 ### Fixed
 - Windows: a command that timed out left its child processes running. kidwit now ends the whole process tree.
 - The eval task `rename-everywhere` no longer needs a Unix shell to check its result.

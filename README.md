@@ -14,6 +14,14 @@ export ANTHROPIC_API_KEY=sk-ant-...
 kidwit "fix the failing test"
 ```
 
+Or with one line, on macOS and Linux:
+
+```
+curl -fsSL https://kidwit.sabbiramin.dev/install | sh
+```
+
+The script is `scripts/install.sh` in this repository, so you can read it first. It never uses `sudo` and writes only inside your home directory. It installs with `pipx` or `uv` if you have one. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks its SHA-256 checksum, and puts a launcher at `~/.local/bin/kidwit`. If there is no release file yet, it installs the PyPI package into its own virtual environment instead. Set `KIDWIT_VERSION=0.1.0rc1` to pick a version, or `KIDWIT_DRY_RUN=1` to see what it would do.
+
 The whole engine is one file, so you can also run it with no install at all:
 
 ```

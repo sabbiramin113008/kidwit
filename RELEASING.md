@@ -66,8 +66,8 @@ kidwit is published to PyPI as `kidwit`, and as a single file (`kidwit.py`) atta
 
 Because kidwit asks for approval on stdin, it cannot be run as `curl ... | python3 -`: the pipe would use up the standard input. These are the supported one-liners instead:
 
-1. Install: `curl -fsSL https://kidwit.sabbiramin.dev/install | sh`. The script (kept in this repository as `scripts/install.sh`) checks for Python 3.9 or newer, installs with `pipx` or `uv` when they exist, and otherwise downloads `kidwit.py` to `~/.local/bin/kidwit`. It checks the SHA-256 checksum from the release, never uses `sudo`, and installs the latest release unless `KIDWIT_VERSION` is set.
+1. Install: `curl -fsSL https://kidwit.sabbiramin.dev/install | sh`. The script (kept in this repository as `scripts/install.sh`) checks for Python 3.9 or newer and installs with `pipx` or `uv` when they exist. Otherwise it downloads `kidwit.py` from the latest GitHub Release, checks the SHA-256 checksum from `SHA256SUMS`, and puts a launcher in `~/.local/bin`. If the release has no files yet, it installs the PyPI package into a private virtual environment. It never uses `sudo`, and it installs the latest release unless `KIDWIT_VERSION` is set. `scripts/install.sh` is tested offline in `tests/test_kidwit.py`; after changing it, run `scripts/check.sh`.
 2. Try without installing (bash or zsh): `python3 <(curl -fsSL https://kidwit.sabbiramin.dev/kidwit.py) "fix the failing test"`.
 3. After the first PyPI release: `uvx kidwit "fix the failing test"` or `pipx run kidwit`.
 
-The website serves `/install` and `/kidwit.py` from the files attached to the latest GitHub Release, so the repository stays the single source of truth.
+The website sends `/install` to `scripts/install.sh` on the `main` branch and `/kidwit.py` to the file attached to the latest GitHub Release, using plain redirects, so the repository stays the single source of truth. Anyone who runs the installer runs whatever is on `main`, so review changes to `scripts/install.sh` like release code.

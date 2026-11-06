@@ -1406,5 +1406,73 @@ class NoEmptyToolsTests(ProviderTestCase):
         self.assertTrue(all("tools" not in r["body"] for r in fake.requests))
 
 
+@unittest.skipIf(os.name == "nt", "the installer is a POSIX shell script")
+class InstallScriptTests(unittest.TestCase):
+    SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "install.sh"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+
+    def release(self, tamper=False):
+        """A fake GitHub release on disk: <base>/releases/latest/download/{kidwit.py,SHA256SUMS}."""
+        import hashlib
+        folder = self.tmp / "rel" / "releases" / "latest" / "download"
+        folder.mkdir(parents=True)
+        code = b"print('installed kidwit')\n"
+        (folder / "SHA256SUMS").write_text(f"{hashlib.sha256(code).hexdigest()}  kidwit.py\n")
+        (folder / "kidwit.py").write_bytes(code + (b"# tampered\n" if tamper else b""))
+        return (self.tmp / "rel").as_uri()
+
+    def install(self, base=None, **extra):
+        env = {**SYSTEM_ENV, "PATH": os.environ["PATH"], "HOME": str(self.home), "KIDWIT_METHOD": "file", **extra}
+        if base:
+            env["KIDWIT_BASE_URL"] = base
+        return subprocess.run(["sh", str(self.SCRIPT)], capture_output=True, text=True, env=env, timeout=60)
+
+    def test_syntax_is_valid_posix_sh(self):
+        self.assertEqual(subprocess.run(["sh", "-n", str(self.SCRIPT)]).returncode, 0)
+
+    def test_installs_a_verified_release_and_the_launcher_runs(self):
+        proc = self.install(self.release())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Checksum OK", proc.stdout)
+        launcher = self.home / ".local" / "bin" / "kidwit"
+        out = subprocess.run([str(launcher)], capture_output=True, text=True, timeout=30)
+        self.assertIn("installed kidwit", out.stdout)
+
+    def test_a_tampered_download_installs_nothing(self):
+        proc = self.install(self.release(tamper=True))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("checksum mismatch", proc.stderr)
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_a_missing_release_fails_cleanly(self):
+        proc = self.install((self.tmp / "nothing").as_uri())
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_dry_run_changes_nothing(self):
+        proc = self.install(self.release(), KIDWIT_DRY_RUN="1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("would", proc.stdout)
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_unknown_method_is_refused(self):
+        proc = self.install(KIDWIT_METHOD="nope")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unknown KIDWIT_METHOD", proc.stderr)
+
+    def test_a_truncated_download_runs_nothing(self):
+        text = self.SCRIPT.read_text()
+        cut = text[: text.index("main \"$@\"") - 40]  # the last line, and a bit more, is missing
+        env = {**SYSTEM_ENV, "PATH": os.environ["PATH"], "HOME": str(self.home), "KIDWIT_METHOD": "file"}
+        subprocess.run(["sh"], input=cut, capture_output=True, text=True, env=env, timeout=30)
+        self.assertFalse((self.home / ".local").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
