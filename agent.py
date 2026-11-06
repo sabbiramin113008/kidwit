@@ -278,3 +278,40 @@ class Tools:
         self.audit("edit", rel)
         self.save(p, new)
         return f"edited {rel} ({count if replace_all else 1} replacement(s))"
+
+    def t_run(self, command, timeout=DEFAULT_TIMEOUT):
+        timeout = float(timeout)
+        self.confirm("run", command, command)
+        self.audit("run", command)
+        posix = os.name == "posix"
+        proc = subprocess.Popen(command, shell=True, cwd=self.root, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                encoding="utf-8", errors="replace", start_new_session=posix)
+        expired = []
+
+        def kill():
+            try:
+                os.killpg(proc.pid, signal.SIGKILL) if posix else proc.kill()
+            except OSError:
+                pass
+
+        def expire():
+            expired.append(True)
+            kill()
+
+        timer = threading.Timer(timeout, expire)
+        timer.start()
+        lines = []
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                self.ui.emit("output", line=line.rstrip("\n"))
+            proc.wait()
+        except BaseException:
+            kill()
+            raise
+        finally:
+            timer.cancel()
+            proc.stdout.close()
+        status = f"[timed out after {timeout:g}s and was killed]" if expired else f"[exit code {proc.returncode}]"
+        return status + "\n" + "".join(lines)
