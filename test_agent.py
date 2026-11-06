@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -773,6 +774,15 @@ class CliTests(ToolTestCase):
         self.assertEqual(p.seen[1][1], [{"role": "user", "text": "second"}])
         self.assertEqual(len(p.steps), 0)
 
+    def test_repl_verbose_toggle(self):
+        p = ScriptedProvider(("", [call("1", "run", command="echo hello-from-run")], (1, 1)), ("ok", [], (1, 1)))
+        with mock.patch.object(agent.UI, "ask", side_effect=["/verbose", "go", "/verbose", None]):
+            code, out, _ = self.run_main("--yes", provider=p)
+        self.assertEqual(code, 0)
+        self.assertIn("verbose on", out)
+        self.assertIn("hello-from-run", out)
+        self.assertIn("verbose off", out)
+
     def test_repl_quits_on_eof(self):
         code, _, _ = self.run_main("--json", provider=ScriptedProvider(), stdin="")
         self.assertEqual(code, 0)
@@ -919,6 +929,119 @@ class QuietOutputTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             ui.emit(*self.OUTPUT[:1], **self.OUTPUT[1])
         self.assertEqual(json.loads(out.getvalue()), {"type": "output", "line": "noisy test output"})
+
+
+class SmarterEditTests(ToolTestCase):
+    def read(self, name="f.py"):
+        return (self.root / name).read_bytes().decode()
+
+    def edit(self, old, new, name="f.py"):
+        return self.call("edit_file", path=name, old_text=old, new_text=new)
+
+    def test_trailing_whitespace_differences_are_tolerated(self):
+        self.put("f.py", "def f():   \n    return 1  \n\nx = 2\n")
+        out, err = self.edit("def f():\n    return 1", "def f():\n    return 2")
+        self.assertFalse(err, out)
+        self.assertEqual(self.read(), "def f():\n    return 2\n\nx = 2\n")
+
+    def test_loose_match_works_the_other_way_and_with_crlf(self):
+        (self.root / "f.py").write_bytes(b"a = 1\r\nb = 2\r\nc = 3\r\n")
+        self.assertFalse(self.edit("b = 2   \n", "b = 20\n")[1])
+        self.assertEqual(self.read(), "a = 1\r\nb = 20\r\nc = 3\r\n")
+
+    def test_loose_match_must_be_unique(self):
+        self.put("f.py", "x = 1  \ny\nx = 1\nz\n")
+        out, err = self.edit("x = 1", "x = 9")
+        self.assertTrue(err)
+        self.assertIn("2 places", out)
+
+    def test_exact_match_is_still_preferred_and_strict_about_indentation(self):
+        self.put("f.py", "if a:\n    run()\n")
+        out, err = self.edit("if a:\nrun()", "if a:\n    go()")
+        self.assertTrue(err)
+        self.assertEqual(self.read(), "if a:\n    run()\n")
+
+    def test_not_found_points_at_the_closest_line(self):
+        self.put("f.py", "import os\n\ndef compute_total(items):\n    return sum(items)\n")
+        out, err = self.edit("def compute_totl(items):", "def compute(items):")
+        self.assertTrue(err)
+        self.assertIn("closest line is 3", out)
+        self.assertIn("compute_total", out)
+
+    def test_not_found_without_a_close_line_has_no_hint(self):
+        self.put("f.py", "alpha\nbeta\n")
+        out, err = self.edit("zzzzzzzzzz", "x")
+        self.assertTrue(err)
+        self.assertNotIn("closest", out)
+        self.assertIn("Re-read", out)
+
+
+class BadArgumentsTests(ToolTestCase):
+    def test_message_names_the_tool(self):
+        out, err = self.tools.call("read_file", {"path": "a", "offzet": 1})
+        self.assertTrue(err)
+        self.assertTrue(out.startswith("bad arguments for read_file:"), out)
+        out, err = self.tools.call("edit_file", {"path": "a"})
+        self.assertIn("missing", out)
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class GitAwareListingTests(ToolTestCase):
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    def setUp(self):
+        super().setUp()
+        self.put(".gitignore", "*.log\ngenerated/\n.env\n")
+        self.put("src/app.py", "needle = 1\n")
+        self.put("tracked.txt", "needle\n")
+        self.git("init", "-q")
+        self.git("add", "tracked.txt")
+        self.put("untracked.py", "needle = 2\n")
+        self.put("debug.log", "needle\n")
+        self.put("generated/out.py", "needle = 3\n")
+        self.put(".env", "SECRET=needle\n")
+
+    def test_respects_gitignore_and_includes_untracked(self):
+        files = self.call("list_files")[0].split("\n")
+        for wanted in ("src/app.py", "tracked.txt", "untracked.py", ".gitignore"):
+            self.assertIn(wanted, files)
+        for hidden in ("debug.log", "generated/out.py", ".env"):
+            self.assertNotIn(hidden, files)
+
+    def test_search_skips_ignored_files(self):
+        out = self.call("search", regex="needle")[0]
+        self.assertIn("src/app.py:1:", out)
+        for hidden in ("debug.log", "generated", ".env"):
+            self.assertNotIn(hidden, out)
+
+    def test_globs_still_work(self):
+        self.assertEqual(sorted(self.call("list_files", pattern="*.py")[0].split("\n")), ["src/app.py", "untracked.py"])
+
+    def test_deleted_tracked_file_is_not_listed(self):
+        (self.root / "tracked.txt").unlink()
+        self.assertNotIn("tracked.txt", self.call("list_files")[0].split("\n"))
+
+    def test_ignored_files_can_still_be_read_explicitly(self):
+        self.assertIn("SECRET", self.call("read_file", path=".env")[0])
+
+    def test_subdirectory_of_a_repo_lists_only_its_own_files(self):
+        self.tools = agent.Tools(self.root / "src", self.ui, "auto")
+        self.assertEqual(self.call("list_files")[0], "app.py")
+
+    def test_skip_dirs_apply_to_tracked_files_too(self):
+        self.put("node_modules/lib.js", "needle\n")
+        self.git("add", "-f", "node_modules/lib.js")
+        self.assertNotIn("node_modules/lib.js", self.call("list_files")[0])
+
+    def test_non_repo_falls_back_to_directory_walk(self):
+        with tempfile.TemporaryDirectory() as plain:
+            (Path(plain) / "a.txt").write_text("hi")
+            self.assertEqual(agent.Tools(plain, self.ui, "auto").call("list_files", {}), ("a.txt", False))
+
+    def test_missing_git_falls_back_to_directory_walk(self):
+        with mock.patch.object(agent.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertIn("debug.log", self.call("list_files")[0].split("\n"))
 
 
 if __name__ == "__main__":

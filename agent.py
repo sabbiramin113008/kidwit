@@ -35,9 +35,12 @@ BANNER = "  █▄▀ █ █▀▄ █ █ █ █ ▀█▀\n  █ █ █ █
 SYSTEM = """You are kidwit, a coding agent working inside one project directory.
 Project root: {root}   OS: {os}   Shell: {shell}
 
-Explore with list_files and search, and read_file before you change anything.
-Prefer edit_file for small changes, copying old_text exactly. Verify your work by running the tests.
-Paths are relative to the project root. If the user denies an action, adapt to their feedback.
+Explore first: use list_files and search to find the right files, and read_file before you change anything.
+Make the smallest change that solves the task. Prefer edit_file, copying old_text exactly with enough context to match once.
+Never guess file contents or paths. If a tool call fails, read the error and fix the call instead of repeating it.
+After changing code, run the tests or a relevant command to check your work, and fix anything you broke.
+Paths are relative to the project root. If the user denies an action, adapt to their feedback and do not retry it.
+If the request is ambiguous or risky, ask a short question instead of guessing.
 Be concise. When done, say what you changed and the result."""
 
 
@@ -213,6 +216,14 @@ def kill_tree(proc):
         pass
 
 
+def loose_matches(text, old):
+    """Slices of text equal to old once trailing whitespace is ignored on every line."""
+    lines, want = text.splitlines(True), [line.rstrip() for line in old.splitlines()]
+    spans = ["".join(lines[i:i + len(want)]) for i in range(len(lines) - len(want) + 1)
+             if [line.rstrip() for line in lines[i:i + len(want)]] == want]
+    return spans if old.endswith("\n") else [span.rstrip("\r\n") for span in spans]
+
+
 def diff(old, new, name):
     return "".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True),
                                         f"a/{name}", f"b/{name}"))
@@ -240,6 +251,8 @@ class Tools:
             return clip(fn(**args)), False
         except ToolError as e:
             return clip(str(e)), True
+        except TypeError as e:
+            return f"bad arguments for {name}: {e}", True
         except Exception as e:
             return f"{type(e).__name__}: {e}", True
 
@@ -253,17 +266,30 @@ class Tools:
     def rel(self, p):
         return p.relative_to(self.root).as_posix()
 
+    def listing(self):
+        """Project files: git's list (honours .gitignore) inside a repo, else a directory walk."""
+        try:
+            raw = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=self.root,
+                                 capture_output=True, check=True, timeout=10).stdout.decode("utf-8", "replace")
+            if raw:
+                return sorted(self.root / name for name in raw.split("\0") if name)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        paths = []
+        for dirpath, dirs, files in os.walk(self.root):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            paths += [Path(dirpath) / name for name in sorted(files)]
+        return paths
+
     def walk(self, pattern=None):
         """Yield (path, relpath) for project files, skipping SKIP_DIRS and outside symlinks."""
         rx = glob_re(pattern) if pattern else None
-        for dirpath, dirs, files in os.walk(self.root):
-            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
-            for name in sorted(files):
-                p = Path(dirpath) / name
-                rel = self.rel(p)
-                outside = p.is_symlink() and self.root not in p.resolve().parents
-                if not outside and (rx is None or rx.match(rel if "/" in pattern else name)):
-                    yield p, rel
+        for p in self.listing():
+            rel = self.rel(p)
+            outside = p.is_symlink() and self.root not in p.resolve().parents
+            if p.is_file() and not outside and not SKIP_DIRS.intersection(rel.split("/")[:-1]) \
+                    and (rx is None or rx.match(rel if "/" in pattern else p.name)):
+                yield p, rel
 
     def load(self, p):
         data = p.read_bytes()
@@ -353,8 +379,13 @@ class Tools:
             old_text = old_text.replace("\r\n", "\n").replace("\n", "\r\n")
             new_text = new_text.replace("\r\n", "\n").replace("\n", "\r\n")
         count = text.count(old_text)
+        if count == 0 and len(spans := loose_matches(text, old_text)) == 1:
+            old_text, count = spans[0], 1
         if count == 0:
-            raise ToolError(f"old_text not found in {rel}; re-read the file and copy it exactly")
+            lines = [line.strip() for line in text.splitlines()]
+            near = difflib.get_close_matches(old_text.strip().split("\n")[0].strip(), lines, 1, 0.6)
+            hint = f"; the closest line is {lines.index(near[0]) + 1}: {near[0]!r}" if near else ""
+            raise ToolError(f"old_text not found in {rel}{hint}. Re-read the file and copy it exactly")
         if count > 1 and not replace_all:
             raise ToolError(f"old_text matches {count} places in {rel}; add surrounding "
                             "context to make it unique, or set replace_all")
@@ -553,7 +584,7 @@ def main(argv=None):
     if args.task:
         return 0 if bot.run(" ".join(args.task)) is not None else 1
     ui.banner()
-    ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /exit quits.")
+    ui.emit("info", message=f"kidwit {VERSION} in {root}. /clear resets, /verbose toggles detail, /exit quits.")
     while True:
         try:
             line = ui.ask("> ")
@@ -564,6 +595,9 @@ def main(argv=None):
         if line.strip() == "/clear":
             bot.history.clear()
             ui.emit("info", message="history cleared")
+        elif line.strip() == "/verbose":
+            ui.verbose = not ui.verbose
+            ui.emit("info", message="verbose " + ("on" if ui.verbose else "off"))
         elif line.strip():
             bot.run(line)
 
