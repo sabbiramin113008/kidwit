@@ -95,6 +95,21 @@ WRITE_TOOLS = {"write_file", "edit_file", "run"}
 TOOL_NAMES = {t["name"] for t in TOOLS}
 
 
+def glob_re(pat):
+    """Compile a glob ('*', '?', '**') to a regex. '**/' also matches zero directories."""
+    out, i = "", 0
+    while i < len(pat):
+        if pat.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pat.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif pat[i] in "*?":
+            out, i = out + ("[^/]*" if pat[i] == "*" else "[^/]"), i + 1
+        else:
+            out, i = out + re.escape(pat[i]), i + 1
+    return re.compile(out + r"\Z")
+
+
 class Tools:
     def __init__(self, root, ui, mode="ask", log=True):
         self.root, self.ui, self.mode, self.log = Path(root).resolve(), ui, mode, log
@@ -133,3 +148,60 @@ class Tools:
 
     def rel(self, p):
         return p.relative_to(self.root).as_posix()
+
+    def walk(self, pattern=None):
+        """Yield (path, relpath) for project files, skipping SKIP_DIRS and outside symlinks."""
+        rx = glob_re(pattern) if pattern else None
+        for dirpath, dirs, files in os.walk(self.root):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            for name in sorted(files):
+                p = Path(dirpath) / name
+                rel = self.rel(p)
+                if rx and not rx.match(rel if "/" in pattern else name):
+                    continue
+                if p.is_symlink() and self.root not in p.resolve().parents:
+                    continue
+                yield p, rel
+
+    def load(self, p):
+        data = p.read_bytes()
+        if b"\0" in data[:4096]:
+            raise ToolError(f"binary file: {self.rel(p)}")
+        return data.decode("utf-8", errors="replace")
+
+    def t_list_files(self, pattern=None):
+        rels = [rel for _, rel in self.walk(pattern)]
+        more = f"\n[truncated: {len(rels) - 1000} more files]" if len(rels) > 1000 else ""
+        return "\n".join(rels[:1000]) + more or "(no files)"
+
+    def t_search(self, regex, pattern=None):
+        try:
+            rx = re.compile(regex)
+        except re.error as e:
+            raise ToolError(f"invalid regex: {e}")
+        hits = []
+        for p, rel in self.walk(pattern):
+            try:
+                if p.stat().st_size > 2_000_000:
+                    continue
+                data = p.read_bytes()
+            except OSError:
+                continue
+            if b"\0" in data[:4096]:
+                continue
+            for n, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+                if rx.search(line):
+                    hits.append(f"{rel}:{n}: {line[:300]}")
+                    if len(hits) >= 200:
+                        return "\n".join(hits) + "\n[stopped at 200 matches]"
+        return "\n".join(hits) or "no matches"
+
+    def t_read_file(self, path, offset=1, limit=2000):
+        lines = self.load(self.path(path)).splitlines()
+        offset, limit = max(1, int(offset)), int(limit)
+        chunk = lines[offset - 1:offset - 1 + limit]
+        out = "\n".join(f"{i:>6}\t{line}" for i, line in enumerate(chunk, offset))
+        left = len(lines) - (offset - 1 + len(chunk))
+        if left > 0:
+            out += f"\n[{left} more lines; use offset={offset + len(chunk)}]"
+        return out or "(empty file, or offset is past the end)"
