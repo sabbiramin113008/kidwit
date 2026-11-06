@@ -61,3 +61,63 @@ def clip(text, limit=MAX_TOOL_OUTPUT):
         return text
     head = limit * 2 // 3
     return f"{text[:head]}\n...[{len(text) - limit} chars clipped]...\n{text[-(limit - head):]}"
+
+
+def _tool(name, desc, props, required):
+    schema = {k: {"type": t, "description": d} for k, (t, d) in props.items()}
+    return {"name": name, "description": desc,
+            "input_schema": {"type": "object", "properties": schema, "required": required}}
+
+
+PATTERN = ("string", "Optional glob filter such as '*.py' or 'src/**/*.py'")
+TOOLS = [
+    _tool("list_files", "List project files, optionally filtered by a glob pattern.",
+          {"pattern": PATTERN}, []),
+    _tool("search", "Search file contents with a Python regex. Returns path:line: text.",
+          {"regex": ("string", "Python regular expression"), "pattern": PATTERN}, ["regex"]),
+    _tool("read_file", "Read a file with line numbers.",
+          {"path": ("string", "File path"), "offset": ("integer", "First line, 1-based"),
+           "limit": ("integer", "Max lines (default 2000)")}, ["path"]),
+    _tool("write_file", "Create or overwrite a file with the given content.",
+          {"path": ("string", "File path"), "content": ("string", "Full file content")},
+          ["path", "content"]),
+    _tool("edit_file", "Replace exact text in a file. old_text must match exactly once "
+          "unless replace_all is true.",
+          {"path": ("string", "File path"), "old_text": ("string", "Exact text to replace"),
+           "new_text": ("string", "Replacement text"),
+           "replace_all": ("boolean", "Replace every match")}, ["path", "old_text", "new_text"]),
+    _tool("run", "Run a shell command in the project root and return its output.",
+          {"command": ("string", "Shell command"),
+           "timeout": ("integer", "Seconds before the command is killed (default 120)")},
+          ["command"]),
+]
+WRITE_TOOLS = {"write_file", "edit_file", "run"}
+TOOL_NAMES = {t["name"] for t in TOOLS}
+
+
+class Tools:
+    def __init__(self, root, ui, mode="ask", log=True):
+        self.root, self.ui, self.mode, self.log = Path(root).resolve(), ui, mode, log
+
+    def available(self):
+        return [t for t in TOOLS if self.mode != "read-only" or t["name"] not in WRITE_TOOLS]
+
+    def call(self, name, args):
+        """Run a tool. Never raises: every failure becomes (message, True)."""
+        if self.mode == "read-only" and name in WRITE_TOOLS:
+            return f"{name} is disabled in read-only mode", True
+        fn = getattr(self, "t_" + name, None) if name in TOOL_NAMES else None
+        if fn is None:
+            return f"unknown tool: {name}", True
+        try:
+            if not isinstance(args, dict):
+                raise TypeError("arguments must be an object")
+            if "_invalid_json" in args:
+                raise ToolError("bad arguments: not valid JSON: " + str(args["_invalid_json"])[:200])
+            return clip(fn(**args)), False
+        except ToolError as e:
+            return clip(str(e)), True
+        except TypeError as e:
+            return f"bad arguments: {e}", True
+        except Exception as e:
+            return f"{type(e).__name__}: {e}", True
