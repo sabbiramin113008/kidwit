@@ -121,3 +121,15 @@ class Tools:
             return f"bad arguments: {e}", True
         except Exception as e:
             return f"{type(e).__name__}: {e}", True
+
+    def path(self, p):
+        """Resolve p inside the project root. Symlinks are followed, then checked."""
+        if not isinstance(p, str) or not p:
+            raise ToolError("path must be a non-empty string")
+        full = (self.root / p).resolve()
+        if full != self.root and self.root not in full.parents:
+            raise ToolError(f"path is outside the project root: {p}")
+        return full
+
+    def rel(self, p):
+        return p.relative_to(self.root).as_posix()
