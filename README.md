@@ -12,9 +12,9 @@ kidwit reads your code, edits files, runs commands and reports back, using nativ
 
 ## Demo
 
-![kidwit fixing a failing test: it reads the files, asks before running the tests, shows the diff, and asks before applying it](https://raw.githubusercontent.com/sabbiramin113008/kidwit/main/docs/demo.gif)
+![kidwit fixing a failing test: it reads the files, shows the diff, and waits for approval before editing](https://raw.githubusercontent.com/sabbiramin113008/kidwit/main/docs/demo.gif)
 
-A real, unedited session: kidwit finds and fixes an off-by-one in a small project. The model is `deepseek-chat` through the OpenAI-compatible adapter. The three permission prompts (two test runs and one edit) are answered with `y`. Long waits for the model are shortened to two seconds. The recording is [`docs/demo.cast`](https://github.com/sabbiramin113008/kidwit/blob/main/docs/demo.cast), which you can play with `asciinema play docs/demo.cast`, or watch with pause and copy at [kidwit.sabbiramin.dev](https://kidwit.sabbiramin.dev/#demo).
+A real, unedited session: kidwit finds and fixes an off-by-one in a small project. The model is `deepseek-chat` through the OpenAI-compatible adapter. kidwit shows the diff and waits for `y` before it edits the file; running the tests needs no prompt, because plain test commands are on its safe list. Waits for the model longer than five seconds are cut to five, and the GIF plays at 0.8x. The recording is [`docs/demo.cast`](https://github.com/sabbiramin113008/kidwit/blob/main/docs/demo.cast), which you can play with `asciinema play docs/demo.cast`, or watch with pause and copy at [kidwit.sabbiramin.dev](https://kidwit.sabbiramin.dev/#demo).
 
 ## Install
 
