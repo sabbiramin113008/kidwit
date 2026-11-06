@@ -104,7 +104,8 @@ def post_json(url, headers, body):
             with urllib.request.urlopen(req, timeout=300) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="replace")[:1500]
+            with e:
+                detail = e.read().decode("utf-8", errors="replace")[:1500]
             if e.code not in RETRY_CODES:
                 raise AgentError(f"HTTP {e.code}: {detail}")
             err = f"HTTP {e.code}: {detail}"

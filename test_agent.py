@@ -1,8 +1,10 @@
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import agent
@@ -291,6 +293,172 @@ class AuditTests(ToolTestCase):
     def test_logging_failure_is_swallowed(self):
         self.put(".agent", "i am a file, not a directory")
         self.assertFalse(self.call("write_file", path="a.txt", content="1")[1])
+
+
+class FakeAPI:
+    """Local HTTP server replaying scripted (status, body) replies and recording requests."""
+
+    def __init__(self, replies):
+        self.replies, self.requests = list(replies), []
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                outer.requests.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()},
+                                       "body": json.loads(self.rfile.read(length))})
+                status, body = outer.replies.pop(0) if outer.replies else (500, {"error": "script ran out"})
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class ProviderTestCase(unittest.TestCase):
+    def setUp(self):
+        agent.BACKOFF = 0
+        self.addCleanup(setattr, agent, "BACKOFF", 2)
+
+    def api(self, *replies):
+        fake = FakeAPI(replies)
+        self.addCleanup(fake.close)
+        return fake
+
+
+HISTORY = [
+    {"role": "user", "text": "fix it"},
+    {"role": "assistant", "text": "looking", "calls": [{"id": "c1", "name": "read_file", "input": {"path": "a.py"}}]},
+    {"role": "tool", "results": [{"id": "c1", "output": "code", "is_error": False}]},
+]
+
+
+class PostJsonTests(ProviderTestCase):
+    def test_retries_529_then_succeeds(self):
+        fake = self.api((529, {"error": "overloaded"}), (503, {}), (200, {"ok": True}))
+        self.assertEqual(agent.post_json(fake.url, {}, {"a": 1}), {"ok": True})
+        self.assertEqual(len(fake.requests), 3)
+
+    def test_gives_up_after_four_attempts(self):
+        fake = self.api(*[(529, {"error": "overloaded"})] * 5)
+        with self.assertRaises(agent.AgentError) as cm:
+            agent.post_json(fake.url, {}, {})
+        self.assertIn("4 attempts", str(cm.exception))
+        self.assertEqual(len(fake.requests), 4)
+
+    def test_400_fails_immediately_with_body(self):
+        fake = self.api((400, {"error": "bad model name"}), (200, {}))
+        with self.assertRaises(agent.AgentError) as cm:
+            agent.post_json(fake.url, {}, {})
+        self.assertIn("400", str(cm.exception))
+        self.assertIn("bad model name", str(cm.exception))
+        self.assertEqual(len(fake.requests), 1)
+
+    def test_network_error_is_retried_then_reported(self):
+        with self.assertRaises(agent.AgentError):
+            agent.post_json("http://127.0.0.1:1/x", {}, {})
+
+
+class AnthropicTests(ProviderTestCase):
+    REPLY = {"content": [{"type": "text", "text": "ok"},
+                         {"type": "tool_use", "id": "t9", "name": "run", "input": {"command": "ls"}}],
+             "usage": {"input_tokens": 10, "cache_read_input_tokens": 5,
+                       "cache_creation_input_tokens": 3, "output_tokens": 7}}
+
+    def test_request_shape_and_parsing(self):
+        fake = self.api((200, self.REPLY))
+        p = agent.AnthropicProvider("sk-test", "model-x", fake.url)
+        text, calls, tokens = p.chat("SYS", HISTORY, agent.TOOLS)
+        req = fake.requests[0]
+        self.assertEqual(req["path"], "/v1/messages")
+        self.assertEqual(req["headers"]["x-api-key"], "sk-test")
+        self.assertEqual(req["headers"]["anthropic-version"], "2023-06-01")
+        body = req["body"]
+        self.assertEqual((body["model"], body["max_tokens"]), ("model-x", 8192))
+        self.assertEqual(body["system"][0]["text"], "SYS")
+        self.assertEqual(body["system"][0]["cache_control"], {"type": "ephemeral"})
+        self.assertEqual(body["tools"][0].keys(), {"name", "description", "input_schema"})
+        self.assertEqual(body["messages"][-1]["content"][-1]["cache_control"], {"type": "ephemeral"})
+        result = body["messages"][-1]["content"][0]
+        self.assertEqual((result["type"], result["tool_use_id"], result["is_error"]), ("tool_result", "c1", False))
+        self.assertEqual(body["messages"][1]["content"][1]["type"], "tool_use")
+        self.assertEqual((text, calls), ("ok", [{"id": "t9", "name": "run", "input": {"command": "ls"}}]))
+        self.assertEqual(tokens, (18, 7))
+
+    def test_consecutive_user_messages_merge(self):
+        history = HISTORY + [{"role": "user", "text": "try again"}]
+        msgs = agent.AnthropicProvider.convert(history)
+        self.assertEqual([m["role"] for m in msgs], ["user", "assistant", "user"])
+        self.assertEqual([b["type"] for b in msgs[-1]["content"]], ["tool_result", "text"])
+        two_users = agent.AnthropicProvider.convert([{"role": "user", "text": "a"}, {"role": "user", "text": "b"}])
+        self.assertEqual(len(two_users), 1)
+        self.assertEqual(len(two_users[0]["content"]), 2)
+
+    def test_http_error_surfaces(self):
+        fake = self.api((400, {"error": {"message": "nope"}}))
+        with self.assertRaises(agent.AgentError):
+            agent.AnthropicProvider("k", "m", fake.url).chat("s", HISTORY, [])
+
+
+class OpenAITests(ProviderTestCase):
+    def reply(self, message, usage=None):
+        return (200, {"choices": [{"message": message}], "usage": usage or {}})
+
+    def test_request_shape_and_parsing(self):
+        call = {"id": "x1", "type": "function", "function": {"name": "run", "arguments": '{"command": "ls"}'}}
+        fake = self.api(self.reply({"content": None, "tool_calls": [call]},
+                                   {"prompt_tokens": 4, "completion_tokens": 2}))
+        p = agent.OpenAIProvider("sk-o", "gpt-x", fake.url)
+        text, calls, tokens = p.chat("SYS", HISTORY, agent.TOOLS)
+        req = fake.requests[0]
+        self.assertEqual(req["path"], "/chat/completions")
+        self.assertEqual(req["headers"]["authorization"], "Bearer sk-o")
+        msgs = req["body"]["messages"]
+        self.assertEqual([m["role"] for m in msgs], ["system", "user", "assistant", "tool"])
+        self.assertEqual(msgs[2]["tool_calls"][0]["function"]["arguments"], '{"path": "a.py"}')
+        self.assertEqual(msgs[3], {"role": "tool", "tool_call_id": "c1", "content": "code"})
+        tool = req["body"]["tools"][0]
+        self.assertEqual(tool["type"], "function")
+        self.assertIn("parameters", tool["function"])
+        self.assertEqual((text, calls, tokens), ("", [{"id": "x1", "name": "run", "input": {"command": "ls"}}], (4, 2)))
+
+    def test_no_auth_header_without_key(self):
+        fake = self.api(self.reply({"content": "hi"}))
+        agent.OpenAIProvider(None, "local", fake.url).chat("s", HISTORY[:1], [])
+        self.assertNotIn("authorization", fake.requests[0]["headers"])
+        self.assertNotIn("tools", fake.requests[0]["body"])
+
+    def test_invalid_json_arguments(self):
+        call = {"id": "x1", "type": "function", "function": {"name": "run", "arguments": "{broken"}}
+        fake = self.api(self.reply({"content": "", "tool_calls": [call]}))
+        _, calls, _ = agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
+        self.assertEqual(calls[0]["input"], {"_invalid_json": "{broken"})
+        out, err = agent.Tools(".", None).call("run", calls[0]["input"])
+        self.assertTrue(err)
+        self.assertIn("not valid JSON", out)
+
+    def test_content_null_rules(self):
+        msgs = agent.OpenAIProvider.convert("s", [
+            {"role": "assistant", "text": "", "calls": [{"id": "1", "name": "run", "input": {}}]},
+            {"role": "assistant", "text": "", "calls": []}])
+        self.assertIsNone(msgs[1]["content"])
+        self.assertEqual(msgs[2]["content"], "")
+
+    def test_unexpected_reply(self):
+        fake = self.api((200, {"oops": 1}))
+        with self.assertRaises(agent.AgentError):
+            agent.OpenAIProvider("k", "m", fake.url).chat("s", HISTORY[:1], [])
 
 
 if __name__ == "__main__":
